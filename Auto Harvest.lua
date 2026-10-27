@@ -408,16 +408,19 @@ function dropAllToStorage()
     rebuildFloatingMap()
 
     -- Deteksi baris lantai drop di Storage (cari White Door)
-    local blockDropY = 23
+    local whiteDoorY = 23
     for _, tile in pairs(GetTiles()) do
         if tile.fg == 6 then -- White Door
-            blockDropY = tile.y
+            whiteDoorY = tile.y
             break
         end
     end
 
-    -- Seed ditempatkan MELAYANG 2 KOORDINAT DI ATAS Block (menggunakan ModFly)
-    local seedDropY = math.max(2, blockDropY - 2)
+    -- Block Drop sejajar tepat dengan White Door (Y = whiteDoorY)
+    local blockDropY = whiteDoorY
+
+    -- Seed Drop melayang tepat 2 blok di atas White Door (Y = whiteDoorY - 2)
+    local seedDropY = math.max(2, whiteDoorY - 2)
 
     -- 1. Helper pencari posisi drop Block (dengan proteksi batas lantai Y <= 54)
     local function findNextBlockDropTile(startY)
@@ -475,18 +478,13 @@ function dropAllToStorage()
         return findNextSeedDropTile(startY - 2)
     end
 
-    -- Drop Block jika memenuhi syarat (di baris lantai blockDropY)
+    -- Drop Block jika memenuhi syarat (SEJAJAR White Door di baris blockDropY)
     if findItem(targetBlockID) >= DROP_LIMIT then
         local toDrop = findItem(targetBlockID)
         local targetX, targetY = findNextBlockDropTile(blockDropY)
 
-        local standY = targetY
-        local upperTile = GetTile(targetX, targetY - 1)
-        if upperTile and upperTile.fg == 0 then
-            standY = targetY - 1
-        end
-
-        FindPath(targetX, standY)
+        -- Berdiri tepat di targetY (sejajar White Door, bukan 1 blok di atas)
+        FindPath(targetX, targetY)
         sleep(250)
 
         local p = GetLocal()
@@ -496,14 +494,15 @@ function dropAllToStorage()
         end
         dropItem(targetBlockID, toDrop)
         totalBlockDropped = totalBlockDropped + toDrop
-        sleep(250)
+        sleep(200)
     end
 
-    -- Drop Seed jika memenuhi syarat (MELAYANG DI UDARA di seedDropY)
+    -- Drop Seed jika memenuhi syarat (MELAYANG 2 BLOK DI ATAS White Door di seedDropY)
     if findItem(targetSeedID) >= DROP_LIMIT then
         local toDrop = findItem(targetSeedID)
         local targetX, targetY = findNextSeedDropTile(seedDropY)
 
+        -- Melayang tepat di targetY (2 blok di atas White Door)
         FindPath(targetX, targetY)
         sleep(250)
 
