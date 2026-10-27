@@ -115,37 +115,38 @@ function autoDetectBagItem()
 end
 
 -- =========================================================
--- DETEKSI MODERATOR / GUARDIAN (MOD RADAR)
+-- DETEKSI MODERATOR / GUARDIAN (INFORMASI RADAR)
 -- =========================================================
-function isModeratorPresent()
+function checkModeratorAlert()
     local getPlayers = GetPlayerList or GetPlayers or getPlayerList
     if not getPlayers then return false end
     local ok, players = pcall(getPlayers)
     if not ok or not players then return false end
 
     for _, p in pairs(players) do
-        local name = p.name or ""
-        -- Moderator / Guardian memiliki prefix @ atau flag mod
-        if name:sub(1, 1) == "@" or name:find("@") or p.isMod or p.mod or p.admin then
-            return true, name
+        local rawName = p.name or ""
+        local clean = rawName:gsub("`.", ""):gsub("^%s+", "")
+        -- Hanya jika nama diawali karakter '@' asli (bukan guild tag)
+        if clean:sub(1, 1) == "@" and not clean:find(" ") then
+            return true, clean
         end
     end
     return false
 end
 
 -- =========================================================
--- SISTEM DROP TEPAT 1 ITEM (PRECISE SACRIFICE WITH JITTER)
+-- SISTEM DROP TEPAT 1 ITEM (PRECISE SACRIFICE)
 -- =========================================================
 function dropSingleItem(id)
     if findItem(id) <= 0 then return false end
 
     -- Buka dialog drop untuk item target
     SendPacket(2, "action|drop\nitemID|" .. id)
-    humanSleep(350, 450) -- Jeda aman agar server merespons pembukaan dialog drop
+    humanSleep(400, 500) -- Jeda aman agar server merespons pembukaan dialog drop
 
     -- Kirim dialog_return tepat dengan count = 1
     SendPacket(2, "action|dialog_return\ndialog_name|drop_item\nitemID|" .. id .. "|\ncount|1")
-    humanSleep(350, 450)
+    humanSleep(400, 500)
     return true
 end
 
@@ -159,8 +160,8 @@ function reachDropPosition()
     local curX = math.floor(me.posX / 32)
     local curY = math.floor(me.posY / 32)
 
-    -- Jika sudah berada tepat di pusaran (toleransi 1 blok)
-    if math.abs(curX - dropX) <= 1 and math.abs(curY - dropY) <= 1 then
+    -- Jika sudah berada di area pusaran (toleransi radius 3 blok)
+    if math.abs(curX - dropX) <= 3 and math.abs(curY - dropY) <= 3 then
         return true
     end
 
@@ -168,26 +169,36 @@ function reachDropPosition()
     setAntiBounce(true)
     FindPath(dropX, dropY)
 
-    -- Tunggu bot sampai di koordinat tujuan (maksimal 12 detik dari White Door)
+    -- Tunggu bot sampai di area pusaran
     local wait = 0
-    while wait < 120 and botRunning do
+    while wait < 80 and botRunning do
         sleep(100)
         me = GetLocal()
         if me then
             curX = math.floor(me.posX / 32)
             curY = math.floor(me.posY / 32)
-            if math.abs(curX - dropX) <= 1 and math.abs(curY - dropY) <= 1 then
+            if math.abs(curX - dropX) <= 3 and math.abs(curY - dropY) <= 3 then
                 return true
             end
 
-            -- Re-pathfind setiap 1.5 detik jika masih dalam perjalanan / ada halangan
-            if wait % 15 == 0 then
+            -- Re-trigger pathfind setiap 2 detik jika belum sampai
+            if wait > 0 and wait % 20 == 0 then
                 setModFly(true)
                 setAntiBounce(true)
                 FindPath(dropX, dropY)
             end
         end
         wait = wait + 1
+    end
+
+    -- Toleransi kedekatan akhir
+    me = GetLocal()
+    if me then
+        curX = math.floor(me.posX / 32)
+        curY = math.floor(me.posY / 32)
+        if math.abs(curX - dropX) <= 4 and math.abs(curY - dropY) <= 4 then
+            return true
+        end
     end
 
     return false
@@ -197,19 +208,19 @@ end
 -- DETEKSI KEMATIAN & RESPAWN DI WHITE DOOR
 -- =========================================================
 function waitForRespawn()
-    currentStatus = "Item dikorbankan! Menunggu respawn di White Door..."
+    currentStatus = "Item dikorbankan! Menunggu respawn..."
     
-    -- Jeda waktu animasi mati Growtopia (biasanya 1.5 - 2 detik)
-    humanSleep(1500, 2200)
+    -- Jeda waktu kematian Growganoth (2.5 detik)
+    sleep(2500)
 
-    -- Tunggu posisi pemain terefresh kembali ke bawah (area White Door)
+    -- Tunggu sampai posisi pemain terefresh kembali ke bawah (area White Door)
     local wait = 0
-    while wait < 40 and botRunning do
+    while wait < 60 and botRunning do
         local me = GetLocal()
         if me then
             local curY = math.floor(me.posY / 32)
             -- Jika posisi Y pemain sudah jauh di bawah pusaran (kembali ke White Door)
-            if curY > (dropY + 4) then
+            if math.abs(curY - dropY) > 4 then
                 break
             end
         end
@@ -218,12 +229,12 @@ function waitForRespawn()
     end
 
     -- Beri jeda sejenak dan re-aktifkan ModFly & AntiBounce untuk pendakian berikutnya
-    humanSleep(300, 500)
+    sleep(600)
     setModFly(true)
     setAntiBounce(true)
 end
 
--- Keluar dari world saat seluruh item habis atau darurat Mod
+-- Keluar dari world saat seluruh item habis
 function exitWorld()
     if LogToConsole then
         pcall(LogToConsole, "`4[Growganoth] `wKeluar dari world (Quit to Exit)...")
@@ -241,18 +252,7 @@ end
 function mainGrowganothLoop()
     if not botRunning then return end
 
-    -- Validasi 1: Koordinat Pusaran harus sudah ditentukan!
-    if dropX == 0 and dropY == 0 then
-        currentStatus = "`4Posisi pusaran belum diset! (Klik Simpan Posisi)"
-        botRunning = false
-        if LogToConsole then
-            pcall(LogToConsole, "`4[Growganoth Error] `wHarap tentukan posisi pusaran terlebih dahulu di menu (/gw)!")
-        end
-        showMenuDialog()
-        return
-    end
-
-    -- Validasi 2: Item harus tersedia di dalam tas
+    autoDetectBagItem()
     local initialCount = findItem(targetItemID)
     if initialCount <= 0 then
         currentStatus = "`4Item target tidak ditemukan di dalam tas!"
@@ -268,32 +268,23 @@ function mainGrowganothLoop()
     setAntiBounce(true)
 
     if LogToConsole then
-        pcall(LogToConsole, string.format("`2[Growganoth] `wDropper aktif! Target: %s (%d item) | Posisi: (%d, %d)", 
+        pcall(LogToConsole, string.format("`2[Growganoth] `wDropper aktif! Target: %s (%d item) | Posisi Pusaran: (%d, %d)", 
               getItemDisplayName(targetItemID), initialCount, dropX, dropY))
     end
 
     local dropStreak = 0
-    local nextBreathTarget = math.random(15, 25) -- Pola napas manusiawi
 
     while botRunning do
-        -- Anti-Ban: Pengecekan aktif kehadiran Moderator
-        local modFound, modName = isModeratorPresent()
-        if modFound then
-            if LogToConsole then
-                pcall(LogToConsole, "`4[Mod Radar] `wPERINGATAN: Moderator terdeteksi di world: " .. tostring(modName))
-            end
-            botRunning = false
-            currentStatus = "EMERGENCY STOP (Moderator Terdeteksi: " .. tostring(modName) .. ")"
-            if autoExitOnFinish then
-                exitWorld()
-            end
-            break
-        end
-
+        -- Cek sisa item di tas
         local count = findItem(targetItemID)
         if count <= 0 then
-            -- Seluruh item telah habis dikorbankan
-            break
+            -- Cek apakah ada item pengorbanan alternatif (Ripper Wings / Battle Trout)
+            autoDetectBagItem()
+            count = findItem(targetItemID)
+            if count <= 0 then
+                -- Seluruh item telah habis tuntas
+                break
+            end
         end
 
         -- FASE 1: Naik dari White Door ke Pusaran
@@ -322,18 +313,11 @@ function mainGrowganothLoop()
                       ITEM_PRESETS[targetItemID] or "Item", totalDropped, findItem(targetItemID)))
             end
 
-            -- Anti-Ban Micro-Pause sesekali
-            if dropStreak >= nextBreathTarget then
-                humanSleep(1000, 1800)
-                dropStreak = 0
-                nextBreathTarget = math.random(15, 25)
-            end
-
             -- FASE 3: Menunggu Respawn di White Door setelah mati di pusaran
             waitForRespawn()
         else
-            -- Jika gagal mencapai pusaran dalam 12 detik, jeda singkat dan coba kembali dari White Door
-            humanSleep(400, 700)
+            -- Jika belum sampai dalam batas waktu, jeda singkat lalu coba naik kembali
+            sleep(500)
         end
     end
 
