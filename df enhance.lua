@@ -57,7 +57,7 @@ local MAIN_WORLD_DOOR = ""         -- Door ID world utama (jika ada)
 
 -- Mapping Door ID di dalam world PLATSTORES untuk setiap item yang disetor
 local ITEM_DOOR_MAP = {
-    [3]   = "DSEED",  -- Dirt Seed (hanya drop 100 saat penuh 200)
+    [3]   = "DSEED",  -- Dirt Seed (hanya drop 50 saat limit, sisakan 150 untuk kebun & farm)
     [4]   = "LBLOCK", -- Lava Block
     [5]   = "LSEED",  -- Lava Seed
     [10]  = "RBLOCK", -- Rock Block
@@ -364,7 +364,8 @@ function checkAndDropToStorage(forceAll)
     local lavaSeedCount  = findItem(5)
 
     -- Aturan drop ke PLATSTORES (Ambang batas 190 agar tidak tersangkut di 195-199):
-    local needDropDirtSeed = (dirtSeedCount >= 190) or (forceAll and dirtSeedCount > 100)
+    -- Dirt Seed: hanya drop 50 saat mencapai limit agar tersisa 140-150 biji untuk kebun & bangun farm
+    local needDropDirtSeed = (dirtSeedCount >= 190) or (forceAll and dirtSeedCount > 150)
     local needDropRock     = (rockCount >= 190) or (forceAll and rockCount > 0)
     local needDropRockSeed = (rockSeedCount >= 190) or (forceAll and rockSeedCount > 0)
     local needDropCaveSeed = (caveSeedCount >= 190) or (forceAll and caveSeedCount > 0)
@@ -374,7 +375,7 @@ function checkAndDropToStorage(forceAll)
     -- Susun antrean (batch) seluruh item yang harus di-drop
     local dropQueue = {}
     if needDropDirtSeed then
-        local toDrop = forceAll and (findItem(3) - 100) or 100
+        local toDrop = forceAll and (findItem(3) - 150) or 50
         if toDrop > 0 then
             table.insert(dropQueue, { id = 3, count = toDrop, door = ITEM_DOOR_MAP[3] or "DSEED" })
         end
