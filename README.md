@@ -25,12 +25,23 @@ Script pemanen otomatis untuk berbagai jenis farmable dengan fitur:
 - **Zero-Pickup Storage Protection**: 4-lapis proteksi saat berada di storage world agar bot tidak mengambil kembali item yang sudah di-drop.
 - **Anti-Ban & Humanized Delays**: Proteksi interval warp dan jeda antar-panen.
 
+### 3. `Growganoth Dropper.lua`
+Script otomatisasi pengorbanan item pada **Event Halloween Growganoth** dengan fitur:
+- **Precision 1-by-1 Drop**: Menjatuhkan item tepat 1 per 1 (`count = 1`) setiap kali naik ke pusaran untuk mencegah hilangnya ratusan item sekaligus akibat limitasi reward Growganoth.
+- **Interactive Coordinate Locking**: Terbang manual ke atas pusaran Growganoth, buka menu dialog (`/gw`), lalu klik `[ 📍 Simpan Posisi Saat Ini ]` untuk mengunci koordinat.
+- **Lock-Safe Protection**: Bot tidak dapat di-start sebelum posisi pusaran berhasil disimpan dan item target terdeteksi di tas.
+- **Quick Preset**: Pilihan tombol cepat untuk item populer event: **Ripper Wings** (ID: 2572) dan **Battle Trout** (ID: 3064), serta input custom ID.
+- **Auto-Exit on Finish**: Begitu seluruh item di tas habis dikorbankan (0), bot otomatis berhenti dan keluar dari world (`Quit to Exit`).
+
 ---
 
 ## 🚀 Cara Penggunaan
-1. Salin script (`df enhance.lua` atau `Auto Harvest.lua`) ke folder Lua GrowLauncher Anda:
+1. Salin script (`df enhance.lua`, `Auto Harvest.lua`, atau `Growganoth Dropper.lua`) ke folder Lua GrowLauncher Anda:
    ```
    /storage/emulated/0/launcher.powerkuy.growlauncher/ScriptLua/
    ```
 2. Buka menu script pada GrowLauncher dan jalankan script yang diinginkan.
-3. Atur parameter world dan storage melalui menu dialog in-game.
+3. Buka menu in-game menggunakan command chat:
+   - `/df` untuk menu Dirt Farm Builder
+   - `/ht` untuk menu Auto Harvest
+   - `/gw` untuk menu Growganoth Dropper
