@@ -52,19 +52,31 @@ function humanSleep(minMs, maxMs)
     sleep(delay)
 end
 
-function setModFly(state)
+function setModFly(enable)
+    local names = {"ModFly", "Mod Fly", "Fly", "[C] ModFly", "modfly", "fly"}
+    if editToggle then
+        for _, n in ipairs(names) do pcall(editToggle, n, enable) end
+    end
+    if setValue then
+        for _, n in ipairs(names) do pcall(setValue, n, enable) end
+    end
     local fn = setBool or SetBool
     if fn then
-        pcall(fn, "ModFly", state)
-        pcall(fn, "modfly", state)
+        for _, n in ipairs(names) do pcall(fn, n, enable) end
     end
 end
 
-function setAntiBounce(state)
+function setAntiBounce(enable)
+    local names = {"Antibounce", "AntiBounce", "Anti Bounce", "[C] Antibounce", "anti_bounce", "antibounce"}
+    if editToggle then
+        for _, n in ipairs(names) do pcall(editToggle, n, enable) end
+    end
+    if setValue then
+        for _, n in ipairs(names) do pcall(setValue, n, enable) end
+    end
     local fn = setBool or SetBool
     if fn then
-        pcall(fn, "AntiBounce", state)
-        pcall(fn, "antibounce", state)
+        for _, n in ipairs(names) do pcall(fn, n, enable) end
     end
 end
 
@@ -536,6 +548,10 @@ if AddHook then
     pcall(AddHook, hookSendPacket, "OnSendPacket")
     pcall(AddHook, "OnSendPacket", hookSendPacket)
 end
+
+-- Otomatis aktifkan ModFly & AntiBounce untuk menangkal gangguan monster/hantu Growganoth
+setModFly(true)
+setAntiBounce(true)
 
 if LogToConsole then
     pcall(LogToConsole, "`4[Growganoth Dropper] `wScript berhasil dimuat! Ketik `2/gw `wuntuk membuka menu.")
