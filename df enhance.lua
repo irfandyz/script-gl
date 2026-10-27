@@ -755,7 +755,7 @@ function breakLava()
             safeFindPath(standX, standY)
             humanSleep(40, 70)
 
-            -- Lava hanya butuh 3 kali hit di Growtopia! Dibatasi maksimal 10 retry cepat (150-180ms)
+            -- Lava hanya butuh 3 kali hit di Growtopia! Dibatasi maksimal 12 retry cepat (150-180ms)
             local retry = 0
             while GetTile(tile.x, tile.y).fg == 4 and retry < 12 and botRunning do
                 punch(tile.x, tile.y)
@@ -766,14 +766,16 @@ function breakLava()
             humanSleep(30, 50)
             smartCollect(4)
 
-            -- HANYA pasang dirt jika lava berada di lantai dasar Y = 24 DAN bot memiliki dirt di tas
-            -- (Lava di bawah tanah Y > 24 TIDAK perlu ditambal dirt karena lorong harus bolong/bersih)
-            if tile.y == 24 and findItem(2) > 0 and GetTile(tile.x, tile.y).fg == 0 then
-                local placeRetry = 0
-                while GetTile(tile.x, tile.y).fg == 0 and placeRetry < 5 and findItem(2) > 0 and botRunning do
-                    place(tile.x, tile.y, 2)
-                    humanSleep(150, 180)
-                    placeRetry = placeRetry + 1
+            -- Tambal dengan tanah jika lava berada di baris tanah farm (baris genap Y = 24..54)
+            if tile.y >= 24 and tile.y <= 54 and (tile.y % 2 == 0) and tile.x >= 2 and tile.x <= 97 and GetTile(tile.x, tile.y).fg == 0 then
+                if findItem(2) == 0 then smartCollect(6) end
+                if findItem(2) > 0 then
+                    local placeRetry = 0
+                    while GetTile(tile.x, tile.y).fg == 0 and placeRetry < 8 and findItem(2) > 0 and botRunning do
+                        place(tile.x, tile.y, 2)
+                        humanSleep(150, 180)
+                        placeRetry = placeRetry + 1
+                    end
                 end
             end
         end
@@ -783,15 +785,121 @@ function breakLava()
 end
 
 -- =========================================================
--- SESI QUALITY CONTROL (QC SWEEP) & SAPU BERSIH FLOATING
--- Memastikan 100% blok/bg hancur tuntas & tidak ada floating tertinggal sebelum bangun dirt!
+-- SESI QUALITY CONTROL (QC SWEEP) & PENAMBALAN TANAH
+-- Memastikan 100% lava bersih, lubang tanah tertambal, lorong rapi & world bersih!
 -- =========================================================
 function checkAndSweepExcavation()
     currentStatus = "Pemeriksaan Akhir Galian (QC Sweep)..."
     if LogToConsole then
-        pcall(LogToConsole, "`2[QC] `wMemulai pemeriksaan sisa galian & pembersihan floating item...")
+        pcall(LogToConsole, "`2[QC] `wMemulai pemeriksaan QC menyeluruh: Lava, Penambalan Tanah, & Sapu Bersih...")
     end
 
+    -- Helper: Menambal 1 petak kosong dengan tanah (ID 2)
+    local function patchTileWithDirt(tx, ty)
+        if not botRunning then return false end
+        local curTile = GetTile(tx, ty)
+        if not curTile or curTile.fg ~= 0 then return true end
+
+        -- Ambil tanah jika inventori kosong
+        if findItem(2) == 0 then
+            smartCollect(6)
+            if findItem(2) == 0 and hasNurseryTrees() then
+                plantHarvest(tx, (ty == 24) and 23 or (ty - 1))
+            end
+        end
+
+        if findItem(2) == 0 then
+            if LogToConsole then
+                pcall(LogToConsole, string.format("`4[QC-Tambal] `wKehabisan tanah untuk menambal (%d, %d)", tx, ty))
+            end
+            return false
+        end
+
+        -- Berdiri di lorong ganjil di atasnya (atau Y = 23 jika menambal lantai 24)
+        local standY = (ty == 24) and 23 or (ty - 1)
+        safeFindPath(tx, standY)
+        humanSleep(40, 70)
+
+        local pRetry = 0
+        while GetTile(tx, ty).fg == 0 and pRetry < 10 and findItem(2) > 0 and botRunning do
+            place(tx, ty, 2)
+            humanSleep(150, 180)
+            pRetry = pRetry + 1
+        end
+        return (GetTile(tx, ty).fg ~= 0)
+    end
+
+    -- -------------------------------------------------------------
+    -- FASE 1: QC LAVA TERLEWAT (Pindai & bersihkan semua sisa Lava di world)
+    -- -------------------------------------------------------------
+    currentStatus = "QC: Memeriksa sisa Lava terlewat..."
+    for _, tile in pairs(GetTiles()) do
+        if not botRunning then break end
+        if tile.fg == 4 then
+            currentStatus = string.format("QC: Menghancurkan Lava terlewat di (%d, %d)...", tile.x, tile.y)
+            local standX, standY = tile.x, tile.y - 1
+            local upperT = GetTile(standX, standY)
+            if upperT and upperT.fg ~= 0 and upperT.fg ~= 4 then
+                if tile.x > 1 and GetTile(tile.x - 1, tile.y).fg == 0 then
+                    standX, standY = tile.x - 1, tile.y
+                elseif tile.x < 98 and GetTile(tile.x + 1, tile.y).fg == 0 then
+                    standX, standY = tile.x + 1, tile.y
+                end
+            end
+
+            safeFindPath(standX, standY)
+            humanSleep(40, 70)
+
+            local retry = 0
+            while GetTile(tile.x, tile.y).fg == 4 and retry < 15 and botRunning do
+                punch(tile.x, tile.y)
+                humanSleep(150, 180)
+                retry = retry + 1
+            end
+            smartCollect(4)
+
+            -- Jika lava ini berada di baris tanah farm (baris genap Y = 24..54), langsung tambal dengan tanah!
+            if tile.y >= 24 and tile.y <= 54 and (tile.y % 2 == 0) and tile.x >= 2 and tile.x <= 97 then
+                patchTileWithDirt(tile.x, tile.y)
+            end
+        end
+    end
+
+    -- -------------------------------------------------------------
+    -- FASE 2: QC PENAMBALAN BLOK TANAH (Cek semua baris farm genap yang bolong)
+    -- -------------------------------------------------------------
+    currentStatus = "QC: Memeriksa baris tanah yang belum ditambal..."
+    -- Baris tanah bawah tanah & lantai dasar: Y = 24, 26, 28, ..., 54 (selalu diperiksa)
+    local checkRows = {}
+    for ry = 24, 54, 2 do
+        table.insert(checkRows, ry)
+    end
+
+    -- Jika baris atas (Y < 24) sudah dibangun sebelumnya, sertakan juga dalam pemeriksaan penambalan
+    if not needsDirtFarm() then
+        for ry = 4, 22, 2 do
+            table.insert(checkRows, ry)
+        end
+    end
+
+    for _, rowY in ipairs(checkRows) do
+        if not botRunning then break end
+        for colX = 2, 97 do
+            if not botRunning then break end
+            -- Jika petak di baris farm kosong (fg == 0), segera tambal dengan tanah!
+            local t = GetTile(colX, rowY)
+            if t and t.fg == 0 then
+                currentStatus = string.format("QC: Menambal lubang tanah di (%d, %d)...", colX, rowY)
+                patchTileWithDirt(colX, rowY)
+                humanSleep(30, 50)
+            end
+        end
+    end
+
+    -- -------------------------------------------------------------
+    -- FASE 3: QC LORONG GANJIL (Bersihkan sisa blok solid / background di lorong pohon)
+    -- -------------------------------------------------------------
+    currentStatus = "QC: Memeriksa sisa galian di lorong pohon..."
     local function isUnmined(tx, ty)
         -- PROTEKSI MUTLAK: Baris Genap (ty % 2 == 0) adalah BARIS TANAH DIRT FARM!
         -- Dilarang keras disentuh atau dihancurkan sama sekali!
@@ -806,7 +914,6 @@ function checkAndSweepExcavation()
         return (t.fg ~= 0 or t.bg ~= 0)
     end
 
-    -- Fase 1: Hancurkan semua sisa blok solid / background di LORONG KOSONG (HANYA BARIS GANJIL: Y = 25, 27, ..., 53)
     local pass = 0
     local foundMissed = true
     while foundMissed and pass < 3 and botRunning do
@@ -835,8 +942,10 @@ function checkAndSweepExcavation()
         end
     end
 
-    -- Fase 2: Sapu bersih semua floating items yang tertinggal di lorong ganjil bawah tanah
-    currentStatus = "Menyapu bersih floating items di world..."
+    -- -------------------------------------------------------------
+    -- FASE 4: QC SAPU BERSIH FLOATING ITEMS (Pungut & drop ke storage)
+    -- -------------------------------------------------------------
+    currentStatus = "QC: Menyapu bersih floating items di world..."
     for sweepY = 25, 53, 2 do -- STEP 2: Berjalan melayang di lorong ganjil
         if not botRunning then break end
         safeFindPath(2, sweepY)
@@ -864,7 +973,7 @@ function checkAndSweepExcavation()
 
     checkAndDropToStorage(true)
     if LogToConsole then
-        pcall(LogToConsole, "`2[QC] `wPemeriksaan galian tuntas, world 100% bersih tanpa merusak baris farm!")
+        pcall(LogToConsole, "`2[QC] `wPemeriksaan menyeluruh tuntas! Lava bersih, blok bolong tertambal rapi!")
     end
 end
 
