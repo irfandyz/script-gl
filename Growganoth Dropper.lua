@@ -19,8 +19,8 @@
 -- =========================================================
 local botRunning        = false
 local currentStatus     = "Idle (Buka /gw untuk pengaturan)"
-local dropX             = 0       -- Koordinat X pusaran (Diset via Menu)
-local dropY             = 0       -- Koordinat Y pusaran (Diset via Menu)
+local dropX             = 48      -- Koordinat X pusaran (Default: 48)
+local dropY             = 15      -- Koordinat Y pusaran (Default: 15)
 local targetItemID      = 2572    -- Default: Ripper Wings (2572) / Battle Trout (3064)
 local dropDelay         = 450     -- Jeda drop dalam milidetik (ms)
 local totalDropped      = 0       -- Total item yang berhasil dikorbankan
@@ -343,6 +343,8 @@ function showMenuDialog()
     table.insert(lines, "add_spacer|small|")
 
     table.insert(lines, "add_button|btn_save_pos|`3[ 📍 Simpan Posisi Saat Ini ]|noflags|0|0|")
+    table.insert(lines, "add_text_input|input_drop_x|Koordinat X:|" .. dropX .. "|4|")
+    table.insert(lines, "add_text_input|input_drop_y|Koordinat Y:|" .. dropY .. "|4|")
     table.insert(lines, "add_spacer|small|")
 
     table.insert(lines, "add_text_input|input_item_id|Target Item ID:|" .. targetItemID .. "|6|")
@@ -447,7 +449,17 @@ function hookSendPacket(pktType, pkt)
 
     -- Tangkap interaksi pada menu Growganoth
     if rawPkt:find("dialog_name|growganoth_menu") then
-        -- Tangkap input form ID & Delay
+        -- Tangkap input form ID, Delay & Koordinat
+        local newX = rawPkt:match("input_drop_x|([^|\n]+)")
+        if newX and tonumber(newX) then
+            dropX = tonumber(newX)
+        end
+
+        local newY = rawPkt:match("input_drop_y|([^|\n]+)")
+        if newY and tonumber(newY) then
+            dropY = tonumber(newY)
+        end
+
         local newId = rawPkt:match("input_item_id|([^|\n]+)")
         if newId and tonumber(newId) then
             targetItemID = tonumber(newId)
