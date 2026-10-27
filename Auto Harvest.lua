@@ -64,7 +64,7 @@ local targetSeedID  = 0
 -- Proteksi Anti-Ban & Jitter Seed
 pcall(math.randomseed, os.time())
 local lastWarpTime = 0
-local MIN_WARP_INTERVAL = 8 -- Jeda aman minimal (detik) antar pindah world
+local MIN_WARP_INTERVAL = 4 -- Jeda aman natural (detik) antar warp untuk proteksi sub-server rate limit
 
 -- Fungsi Sleep dengan variasi manusiawi (Human Jitter)
 function humanSleep(minMs, maxMs)
@@ -191,43 +191,45 @@ function getMainWorldName()
     return currentMainWorld or ""
 end
 
--- Fungsi Join Aman dengan Anti-Ban Rate Limiter & Smart Exponential Backoff
+-- Fungsi Join Cepat & Aman (Direct Warp tanpa quit_to_exit + Anti-Ban Rate Limiter 4s)
 function join(world, id)
-    -- 1. Anti-Ban: Cek interval selang waktu antar perpindahan world
+    if not world or world == "" then return end
+    local targetName = world:upper():gsub(" ", "")
+
+    -- Cek nama world saat ini
+    local curName = (GetWorldName and GetWorldName()) or 
+                    (getWorldName and getWorldName()) or 
+                    (getCurrentWorldName and getCurrentWorldName()) or
+                    (GetWorld and GetWorld() and GetWorld().name) or
+                    (getWorld and getWorld() and getWorld().name) or ""
+    curName = curName:upper():gsub(" ", "")
+
+    -- Jika sudah berada di world tujuan (dan tanpa door ID tertentu), tidak perlu warp!
+    if curName == targetName and (not id or id == "") then
+        return
+    end
+
+    -- 1. Anti-Ban Rate Limiter: Pastikan jeda minimal 4s antar request warp ke server
     local now = os.time()
     local elapsed = now - lastWarpTime
     if elapsed < MIN_WARP_INTERVAL then
         local waitSec = MIN_WARP_INTERVAL - elapsed
-        if LogToConsole then
-            pcall(LogToConsole, "`7[Anti-Ban] `wMenunggu jeda aman antar-world (" .. waitSec .. "s) agar IP aman...")
-        end
         Sleep(waitSec * 1000)
     end
 
-    -- 2. Keluar dari world secara aman (max 4x percobaan jika lag)
-    if getLocal() then
-        local exitRetry = 0
-        while getLocal() and exitRetry < 4 and botRunning do
-            SendPacket(3, "action|quit_to_exit")
-            humanSleep(2500, 3500)
-            exitRetry = exitRetry + 1
-        end
-    end
-
-    -- 3. Masuk ke world tujuan dengan Backoff & Max Retry (Mencegah Packet Bombardir)
-    local targetName = world:upper()
-    local joinString = (id and id ~= "") and ("action|join_request\nname|" .. targetName .. "|" .. id .. "\ninvitedWorld|0")
-                                         or ("action|join_request\nname|" .. targetName .. "\ninvitedWorld|0")
+    -- 2. Direct Warp: Langsung request join ke world tujuan (tanpa quit_to_exit yang memakan 12s)
+    local targetDoor = (id and id ~= "") and id:upper():gsub(" ", "") or nil
+    local joinString = targetDoor and ("action|join_request\nname|" .. targetName .. "|" .. targetDoor .. "\ninvitedWorld|0")
+                                  or ("action|join_request\nname|" .. targetName .. "\ninvitedWorld|0")
 
     local attempt = 0
     local maxRetries = 5
 
-    while not getLocal() and botRunning do
+    while botRunning do
         attempt = attempt + 1
-        -- Jika gagal 5x berturut-turut, istirahat 25s agar IP tidak terkena temp ban!
         if attempt > maxRetries then
             if LogToConsole then
-                pcall(LogToConsole, "`4[Anti-Ban] `wKoneksi tersendat (5x gagal). Istirahat pendinginan IP 25s...")
+                pcall(LogToConsole, "`4[Anti-Ban] `wSub-server tersendat (5x gagal). Pendinginan IP 25s...")
             end
             currentStatus = "Cooldown Anti-Ban (25s)..."
             Sleep(25000)
@@ -235,21 +237,37 @@ function join(world, id)
         end
 
         SendPacket(3, joinString)
-        humanSleep(4500, 6000)
 
-        -- Periksa jika spawn macet di White Door
-        if getLocal() then
+        -- Polling responsif: tunggu sampai pemain tiba di world tujuan (maks 5s)
+        local arrived = false
+        for _ = 1, 25 do
+            if not botRunning then break end
+            humanSleep(180, 220)
+            local checkName = (GetWorldName and GetWorldName()) or 
+                              (getWorldName and getWorldName()) or 
+                              (getCurrentWorldName and getCurrentWorldName()) or
+                              (GetWorld and GetWorld() and GetWorld().name) or
+                              (getWorld and getWorld() and getWorld().name) or ""
+            if checkName:upper():gsub(" ", "") == targetName and getLocal() then
+                arrived = true
+                break
+            end
+        end
+
+        if arrived then
+            -- Jeda singkat manusiawi agar tile ter-render
+            humanSleep(350, 500)
+
+            -- Cek jika spawn tersangkut di White Door
             local p = GetLocal()
-            local spawnTile = GetTile(math.floor(p.posX / 32), math.floor(p.posY / 32))
-            if spawnTile and spawnTile.fg == 6 then
-                local wdRetry = 0
-                while wdRetry < 3 and GetTile(math.floor(GetLocal().posX / 32), math.floor(GetLocal().posY / 32)).fg == 6 and botRunning do
-                    humanSleep(1500, 2500)
+            if p then
+                local spawnTile = GetTile(math.floor(p.posX / 32), math.floor(p.posY / 32))
+                if spawnTile and spawnTile.fg == 6 then
                     SendPacket(3, joinString)
-                    humanSleep(3500, 4500)
-                    wdRetry = wdRetry + 1
+                    humanSleep(1200, 1800)
                 end
             end
+            break
         end
     end
 
@@ -380,12 +398,11 @@ function dropAllToStorage()
 
     -- Masuk ke World Gudang Penyimpanan
     join(STORAGE_WORLD, STORAGE_DOOR ~= "" and STORAGE_DOOR or nil)
-    sleep(3000)
 
     setModFly(true)
     setAntiBounce(true)
     setAutoCollect(false) -- Pastikan auto collect TETAP MATI selama di world storage
-    sleep(200)
+    humanSleep(200, 300)
 
     -- Bangun lookup table item floating secara instan (O(1))
     rebuildFloatingMap()
@@ -497,20 +514,16 @@ function dropAllToStorage()
         end
         dropItem(targetSeedID, toDrop)
         totalSeedDropped = totalSeedDropped + toDrop
-        sleep(250)
+        sleep(200)
     end
-
-    -- Beri jeda pendinginan sebelum pulang
-    humanSleep(1800, 2600)
 
     -- Selesai Drop: Pulang kembali ke world Dirt Farm
     currentStatus = "Kembali ke world farm..."
     join(mainWorld, MAIN_WORLD_DOOR ~= "" and MAIN_WORLD_DOOR or nil)
-    humanSleep(2000, 3000)
 
     setModFly(true)
     setAntiBounce(true)
-    sleep(200)
+    humanSleep(200, 300)
 
     -- Kembali ke titik kerja terakhir saat panen
     local pathRetry = 0

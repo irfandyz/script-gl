@@ -36,7 +36,7 @@ local currentStatus = "Idle (Tekan START)"
 -- Proteksi Anti-Ban & Jitter Seed
 pcall(math.randomseed, os.time())
 local lastWarpTime = 0
-local MIN_WARP_INTERVAL = 8 -- Jeda aman minimal (detik) antar pindah world/door untuk mencegah flood sub-server
+local MIN_WARP_INTERVAL = 4 -- Jeda aman natural (detik) antar warp untuk proteksi sub-server rate limit
 
 -- Fungsi Sleep dengan variasi manusiawi (Human Jitter)
 function humanSleep(minMs, maxMs)
@@ -227,65 +227,83 @@ function trashItem(id, count)
     end
 end
 
--- Fungsi Join Aman dengan Anti-Ban Rate Limiter & Smart Exponential Backoff
+-- Fungsi Join Cepat & Aman (Direct Warp tanpa quit_to_exit + Anti-Ban Rate Limiter 4s)
 function join(world, id)
-    -- 1. Anti-Ban: Cek interval selang waktu antar perpindahan world/door
+    if not world or world == "" then return end
+    local targetName = world:upper():gsub(" ", "")
+
+    -- Cek nama world saat ini
+    local curName = (GetWorldName and GetWorldName()) or 
+                    (getWorldName and getWorldName()) or 
+                    (getCurrentWorldName and getCurrentWorldName()) or
+                    (GetWorld and GetWorld() and GetWorld().name) or
+                    (getWorld and getWorld() and getWorld().name) or ""
+    curName = curName:upper():gsub(" ", "")
+
+    -- Jika sudah berada di world tujuan (dan tanpa door ID tertentu), tidak perlu warp!
+    if curName == targetName and (not id or id == "") then
+        return
+    end
+
+    -- 1. Anti-Ban Rate Limiter: Pastikan jeda minimal 4s antar request warp ke server
     local now = os.time()
     local elapsed = now - lastWarpTime
     if elapsed < MIN_WARP_INTERVAL then
         local waitSec = MIN_WARP_INTERVAL - elapsed
-        if LogToConsole then
-            pcall(LogToConsole, "`7[Anti-Ban] `wMenunggu jeda aman antar-world (" .. waitSec .. "s) agar IP tidak di-ban...")
-        end
         Sleep(waitSec * 1000)
     end
 
-    -- 2. Keluar dari world secara aman (max 4x percobaan jika lag)
-    if getLocal() then
-        local exitRetry = 0
-        while getLocal() and exitRetry < 4 and botRunning do
-            SendPacket(3, "action|quit_to_exit")
-            humanSleep(2500, 3500)
-            exitRetry = exitRetry + 1
-        end
-    end
-
-    -- 3. Masuk ke world tujuan dengan Backoff & Max Retry (Mencegah Packet Bombardir)
-    local targetName = world:upper()
-    local joinString = (id and id ~= "") and ("action|join_request\nname|" .. targetName .. "|" .. id .. "\ninvitedWorld|0")
-                                         or ("action|join_request\nname|" .. targetName .. "\ninvitedWorld|0")
+    -- 2. Direct Warp: Langsung request join ke world tujuan (tanpa quit_to_exit yang memakan 12s)
+    local targetDoor = (id and id ~= "") and id:upper():gsub(" ", "") or nil
+    local joinString = targetDoor and ("action|join_request\nname|" .. targetName .. "|" .. targetDoor .. "\ninvitedWorld|0")
+                                  or ("action|join_request\nname|" .. targetName .. "\ninvitedWorld|0")
 
     local attempt = 0
     local maxRetries = 5
 
-    while not getLocal() and botRunning do
+    while botRunning do
         attempt = attempt + 1
-        -- Jika gagal 5x berturut-turut, istirahat 25s agar IP tidak terkena temp ban!
         if attempt > maxRetries then
             if LogToConsole then
-                pcall(LogToConsole, "`4[Anti-Ban] `wKoneksi/Sub-server tersendat (5x gagal). Istirahat pendinginan IP 25s...")
+                pcall(LogToConsole, "`4[Anti-Ban] `wSub-server tersendat (5x gagal). Pendinginan IP 25s...")
             end
             currentStatus = "Cooldown Anti-Ban (25s)..."
             Sleep(25000)
-            attempt = 0 -- Reset counter setelah pendinginan IP selesai
+            attempt = 0
         end
 
         SendPacket(3, joinString)
-        humanSleep(4500, 6000) -- Interval acak alami
 
-        -- Periksa jika spawn macet di White Door
-        if getLocal() then
+        -- Polling responsif: tunggu sampai pemain tiba di world tujuan (maks 5s)
+        local arrived = false
+        for _ = 1, 25 do
+            if not botRunning then break end
+            humanSleep(180, 220)
+            local checkName = (GetWorldName and GetWorldName()) or 
+                              (getWorldName and getWorldName()) or 
+                              (getCurrentWorldName and getCurrentWorldName()) or
+                              (GetWorld and GetWorld() and GetWorld().name) or
+                              (getWorld and getWorld() and getWorld().name) or ""
+            if checkName:upper():gsub(" ", "") == targetName and getLocal() then
+                arrived = true
+                break
+            end
+        end
+
+        if arrived then
+            -- Jeda singkat manusiawi agar tile ter-render
+            humanSleep(350, 500)
+
+            -- Cek jika spawn tersangkut di White Door
             local p = GetLocal()
-            local spawnTile = GetTile(math.floor(p.posX / 32), math.floor(p.posY / 32))
-            if spawnTile and spawnTile.fg == 6 then
-                local wdRetry = 0
-                while wdRetry < 3 and GetTile(math.floor(GetLocal().posX / 32), math.floor(GetLocal().posY / 32)).fg == 6 and botRunning do
-                    humanSleep(1500, 2500)
+            if p then
+                local spawnTile = GetTile(math.floor(p.posX / 32), math.floor(p.posY / 32))
+                if spawnTile and spawnTile.fg == 6 then
                     SendPacket(3, joinString)
-                    humanSleep(3500, 4500)
-                    wdRetry = wdRetry + 1
+                    humanSleep(1200, 1800)
                 end
             end
+            break
         end
     end
 
@@ -429,7 +447,6 @@ function checkAndDropToStorage(forceAll)
         -- Berpindah ke door target di PLATSTORES (hanya jika door berbeda)
         if currentDoorInStorage ~= item.door then
             join(STORAGE_WORLD, item.door)
-            humanSleep(2500, 3500)
             currentDoorInStorage = item.door
 
             -- Menghadap ke kanan di marker door ID
@@ -441,28 +458,24 @@ function checkAndDropToStorage(forceAll)
                 pkt.y = localPlayer.posY
                 pkt.state = 0 -- Menghadap kanan
                 SendPacketRaw(false, pkt)
-                humanSleep(200, 300)
+                humanSleep(150, 250)
             end
         end
 
         -- Drop item langsung ke lantai sebelah kanan
         if findItem(item.id) >= item.count then
             dropItem(item.id, item.count)
-            humanSleep(400, 600)
+            humanSleep(350, 500)
         end
     end
 
-    -- Beri jeda pendinginan sebelum pulang agar tidak terkena sub-server rate limit
-    humanSleep(2000, 3000)
-
     -- SETELAH SEMUA ITEM SELESAI DI-DROP: Baru kembali ke world utama (Hanya 1x kembali!)
     join(mainWorld, MAIN_WORLD_DOOR ~= "" and MAIN_WORLD_DOOR or nil)
-    humanSleep(2000, 3000)
 
     -- Re-aktifkan ModFly & AntiBounce
     setModFly(true)
     setAntiBounce(true)
-    sleep(200)
+    humanSleep(200, 300)
 
     -- Jika bukan sesi finishing (sedang di tengah penggalian), kembali ke koordinat kerja galian
     if not forceAll then
@@ -494,7 +507,6 @@ function restockPlatform()
 
     -- Masuk ke world PLATSTORES dengan door ID "PLAT"
     join(STORAGE_WORLD, ITEM_DOOR_MAP[102] or "PLAT")
-    humanSleep(2500, 3500)
 
     -- Deteksi Y White Door di PLATSTORES
     local storeDoorY = 23
@@ -507,7 +519,7 @@ function restockPlatform()
 
     -- Berjalan ke ujung paling kiri yang sejajar dengan White Door (X = 1)
     FindPath(1, storeDoorY)
-    sleep(500)
+    humanSleep(250, 400)
 
     -- Sedot HANYA Wooden Platform (ID 102) dari lantai
     isRestockingPlatform = true
@@ -524,17 +536,13 @@ function restockPlatform()
     end
     isRestockingPlatform = false
 
-    -- Beri jeda sebelum pulang
-    humanSleep(2000, 3000)
-
     -- Kembali ke world utama
     join(mainWorld, MAIN_WORLD_DOOR ~= "" and MAIN_WORLD_DOOR or nil)
-    humanSleep(2000, 3000)
 
     -- Re-aktifkan ModFly & AntiBounce
     setModFly(true)
     setAntiBounce(true)
-    sleep(200)
+    humanSleep(200, 300)
 
     isTransferring = false
     setAutoCollect(true)
