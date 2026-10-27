@@ -355,21 +355,69 @@ end
 
 -- =========================================================
 -- SISTEM DROP CERDAS DI WORLD STORAGE (DARI KANAN KE KIRI)
--- O(1) Instant Hash Map Lookup & Stack-Overflow Protection
+-- Auto-Shift jika Penuh/Terhalang & Verifikasi Sukses Drop
 -- =========================================================
-local floatingItemMap = {}
 
-local function rebuildFloatingMap()
-    floatingItemMap = {}
+-- Hitung akurat total floating items pada koordinat (tileX, tileY)
+local function getFloatingCountAt(tileX, tileY)
+    local total = 0
     local rawObjs = GetObjectList()
     if rawObjs then
         for _, obj in pairs(rawObjs) do
-            local ox = math.floor(obj.posX / 32)
-            local oy = math.floor(obj.posY / 32)
-            local key = ox .. "," .. oy
-            floatingItemMap[key] = (floatingItemMap[key] or 0) + (obj.amount or 0)
+            local ox = math.floor((obj.posX or obj.x or 0) / 32)
+            local oy = math.floor((obj.posY or obj.y or 0) / 32)
+            if ox == tileX and oy == tileY then
+                local count = obj.count or obj.amount or 1
+                total = total + count
+            end
         end
     end
+    return total
+end
+
+-- Helper pencari petak kosong berikutnya dari kanan ke kiri
+local function findNextDropLocation(currentX, currentY, isSeed)
+    local curX = currentX or 98
+    local curY = currentY
+
+    while botRunning do
+        while curX >= 1 and botRunning do
+            local tile = GetTile(curX, curY)
+            -- Cek apakah terhalang blok solid (hanya boleh udara kosong fg==0 atau platform fg==102)
+            local isBlocked = tile and (tile.fg ~= 0 and tile.fg ~= 102)
+            if not isBlocked then
+                local floatingCount = getFloatingCountAt(curX, curY)
+                if floatingCount < 3800 then
+                    return curX, curY
+                end
+            end
+            -- Jika ada blok atau sudah penuh (>= 3800), geser 1 tile ke kiri!
+            curX = curX - 1
+        end
+
+        -- Jika satu baris sudah penuh sampai X = 1, pindah baris
+        curX = 98
+        if isSeed then
+            -- Untuk Seed: naik 2 baris ke atas
+            curY = curY - 2
+            if curY < 2 then
+                if LogToConsole then
+                    pcall(LogToConsole, "`4[Storage Penuh] `wPeringatan: Seluruh baris seed gudang sudah penuh!")
+                end
+                return 98, 2
+            end
+        else
+            -- Untuk Block: turun 2 baris ke bawah
+            curY = curY + 2
+            if curY > 54 then
+                if LogToConsole then
+                    pcall(LogToConsole, "`4[Storage Penuh] `wPeringatan: Seluruh lantai block gudang sudah penuh!")
+                end
+                return 98, 54
+            end
+        end
+    end
+    return curX, curY
 end
 
 function dropAllToStorage()
@@ -404,9 +452,6 @@ function dropAllToStorage()
     setAutoCollect(false) -- Pastikan auto collect TETAP MATI selama di world storage
     humanSleep(200, 300)
 
-    -- Bangun lookup table item floating secara instan (O(1))
-    rebuildFloatingMap()
-
     -- Deteksi baris lantai drop di Storage (cari White Door)
     local whiteDoorY = 23
     for _, tile in pairs(GetTiles()) do
@@ -422,98 +467,92 @@ function dropAllToStorage()
     -- Seed Drop melayang tepat 2 blok di atas White Door (Y = whiteDoorY - 2)
     local seedDropY = math.max(2, whiteDoorY - 2)
 
-    -- 1. Helper pencari posisi drop Block (dengan proteksi batas lantai Y <= 54)
-    local function findNextBlockDropTile(startY)
-        if startY > 54 then
-            if LogToConsole then
-                pcall(LogToConsole, "`4[Storage Penuh] `wPeringatan: Baris drop block telah mencapai batas lantai Y = 54!")
-            end
-            return 98, 54
-        end
-
-        local curX = lastDropBlockX
-        while curX >= 1 and botRunning do
-            local tile = GetTile(curX, startY)
-            local isBlocked = tile and (tile.fg ~= 0 and tile.fg ~= 102)
-            if not isBlocked then
-                local floatingCount = floatingItemMap[curX .. "," .. startY] or 0
-                if floatingCount < 3800 then
-                    lastDropBlockX = curX
-                    floatingItemMap[curX .. "," .. startY] = floatingCount + 200 -- Update cache
-                    return curX, startY
-                end
-            end
-            curX = curX - 1
-        end
-        -- Jika baris penuh sampai X = 1, turun 2 baris
-        lastDropBlockX = 98
-        return findNextBlockDropTile(startY + 2)
-    end
-
-    -- 2. Helper pencari posisi drop Seed (dengan proteksi batas langit Y >= 2)
-    local function findNextSeedDropTile(startY)
-        if startY < 2 then
-            if LogToConsole then
-                pcall(LogToConsole, "`4[Storage Penuh] `wPeringatan: Baris drop seed telah mencapai batas langit Y = 2!")
-            end
-            return 98, 2
-        end
-
-        local curX = lastDropSeedX
-        while curX >= 1 and botRunning do
-            local tile = GetTile(curX, startY)
-            local isBlocked = tile and (tile.fg ~= 0 and tile.fg ~= 102)
-            if not isBlocked then
-                local floatingCount = floatingItemMap[curX .. "," .. startY] or 0
-                if floatingCount < 3800 then
-                    lastDropSeedX = curX
-                    floatingItemMap[curX .. "," .. startY] = floatingCount + 200 -- Update cache
-                    return curX, startY
-                end
-            end
-            curX = curX - 1
-        end
-        -- Jika baris Seed penuh sampai X = 1, naik 2 baris ke atas
-        lastDropSeedX = 98
-        return findNextSeedDropTile(startY - 2)
-    end
-
-    -- Drop Block jika memenuhi syarat (SEJAJAR White Door di baris blockDropY)
+    -- 1. DROP BLOCK (SEJAJAR White Door, Auto-Shift ke kiri jika penuh/terhalang)
     if findItem(targetBlockID) >= DROP_LIMIT then
-        local toDrop = findItem(targetBlockID)
-        local targetX, targetY = findNextBlockDropTile(blockDropY)
+        currentStatus = "Menyetor Block ke storage..."
+        local dropTries = 0
 
-        -- Berdiri tepat di targetY (sejajar White Door, bukan 1 blok di atas)
-        FindPath(targetX, targetY)
-        sleep(250)
+        while findItem(targetBlockID) > 0 and dropTries < 40 and botRunning do
+            local targetX, targetY = findNextDropLocation(lastDropBlockX, blockDropY, false)
+            lastDropBlockX = targetX
 
-        local p = GetLocal()
-        if p then
-            SendPacketRaw(false, {type = 0, x = p.posX, y = p.posY, state = 0})
-            sleep(120)
+            -- Berdiri tepat di targetY (sejajar White Door)
+            FindPath(targetX, targetY)
+            humanSleep(200, 300)
+
+            local p = GetLocal()
+            if p then
+                SendPacketRaw(false, {type = 0, x = p.posX, y = p.posY, state = 0})
+                humanSleep(100, 150)
+            end
+
+            local beforeCount = findItem(targetBlockID)
+            local toDrop = math.min(beforeCount, 200)
+            dropItem(targetBlockID, toDrop)
+            humanSleep(350, 450)
+
+            local afterCount = findItem(targetBlockID)
+            if afterCount < beforeCount then
+                -- Drop BERHASIL
+                local dropped = beforeCount - afterCount
+                totalBlockDropped = totalBlockDropped + dropped
+                -- Jika petak ini sekarang penuh (>= 3800), geser 1 tile ke kiri untuk drop selanjutnya
+                if getFloatingCountAt(targetX, targetY) >= 3800 then
+                    lastDropBlockX = math.max(1, targetX - 1)
+                end
+            else
+                -- Drop GAGAL (Tile penuh / terhalang)! Geser 1 tile ke kiri dan ulangi drop
+                if LogToConsole then
+                    pcall(LogToConsole, string.format("`6[Storage] `wTile Block (%d, %d) penuh/terhalang, menggeser 1 tile ke kiri...", targetX, targetY))
+                end
+                lastDropBlockX = math.max(1, targetX - 1)
+                dropTries = dropTries + 1
+            end
         end
-        dropItem(targetBlockID, toDrop)
-        totalBlockDropped = totalBlockDropped + toDrop
-        sleep(200)
     end
 
-    -- Drop Seed jika memenuhi syarat (MELAYANG 2 BLOK DI ATAS White Door di seedDropY)
+    -- 2. DROP SEED (MELAYANG 2 BLOK DI ATAS White Door, Auto-Shift ke kiri jika penuh)
     if findItem(targetSeedID) >= DROP_LIMIT then
-        local toDrop = findItem(targetSeedID)
-        local targetX, targetY = findNextSeedDropTile(seedDropY)
+        currentStatus = "Menyetor Seed ke storage..."
+        local dropTries = 0
 
-        -- Melayang tepat di targetY (2 blok di atas White Door)
-        FindPath(targetX, targetY)
-        sleep(250)
+        while findItem(targetSeedID) > 0 and dropTries < 40 and botRunning do
+            local targetX, targetY = findNextDropLocation(lastDropSeedX, seedDropY, true)
+            lastDropSeedX = targetX
 
-        local p = GetLocal()
-        if p then
-            SendPacketRaw(false, {type = 0, x = p.posX, y = p.posY, state = 0})
-            sleep(120)
+            -- Melayang tepat di targetY (2 blok di atas White Door)
+            FindPath(targetX, targetY)
+            humanSleep(200, 300)
+
+            local p = GetLocal()
+            if p then
+                SendPacketRaw(false, {type = 0, x = p.posX, y = p.posY, state = 0})
+                humanSleep(100, 150)
+            end
+
+            local beforeCount = findItem(targetSeedID)
+            local toDrop = math.min(beforeCount, 200)
+            dropItem(targetSeedID, toDrop)
+            humanSleep(350, 450)
+
+            local afterCount = findItem(targetSeedID)
+            if afterCount < beforeCount then
+                -- Drop BERHASIL
+                local dropped = beforeCount - afterCount
+                totalSeedDropped = totalSeedDropped + dropped
+                -- Jika petak ini sekarang penuh (>= 3800), geser 1 tile ke kiri untuk drop selanjutnya
+                if getFloatingCountAt(targetX, targetY) >= 3800 then
+                    lastDropSeedX = math.max(1, targetX - 1)
+                end
+            else
+                -- Drop GAGAL (Tile penuh / terhalang)! Geser 1 tile ke kiri dan ulangi drop
+                if LogToConsole then
+                    pcall(LogToConsole, string.format("`6[Storage] `wTile Seed (%d, %d) penuh/terhalang, menggeser 1 tile ke kiri...", targetX, targetY))
+                end
+                lastDropSeedX = math.max(1, targetX - 1)
+                dropTries = dropTries + 1
+            end
         end
-        dropItem(targetSeedID, toDrop)
-        totalSeedDropped = totalSeedDropped + toDrop
-        sleep(200)
     end
 
     -- Selesai Drop: Pulang kembali ke world Dirt Farm
