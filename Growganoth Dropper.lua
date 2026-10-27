@@ -19,7 +19,7 @@
 -- =========================================================
 local botRunning        = false
 local currentStatus     = "Idle (Buka /gw untuk pengaturan)"
-local dropX             = 48      -- Koordinat X pusaran (Default: 48)
+local dropX             = 50      -- Koordinat X pusaran (Default: 50)
 local dropY             = 15      -- Koordinat Y pusaran (Default: 15)
 local targetItemID      = 818     -- Default: Ripper Wings (818) / Battle Trout (1542)
 local dropDelay         = 450     -- Jeda drop dalam milidetik (ms)
