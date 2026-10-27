@@ -162,13 +162,13 @@ end
 function dropSingleItem(id)
     if findItem(id) <= 0 then return false end
 
-    -- Buka dialog drop untuk item target
+    -- Buka dialog drop untuk item target dengan jeda natural
     SendPacket(2, "action|drop\nitemID|" .. id)
-    humanSleep(400, 500) -- Jeda aman agar server merespons pembukaan dialog drop
+    humanSleep(600, 850) -- Jeda wajar manusia membuka dialog drop
 
     -- Kirim dialog_return tepat dengan count = 1
     SendPacket(2, "action|dialog_return\ndialog_name|drop_item\nitemID|" .. id .. "|\ncount|1")
-    humanSleep(400, 500)
+    humanSleep(600, 850)
     return true
 end
 
@@ -189,7 +189,7 @@ function reachDropPosition()
 
     setModFly(true)
     setAntiBounce(true)
-    if Sleep then Sleep(150) end
+    humanSleep(250, 450)
     FindPath(dropX, dropY)
 
     -- Tunggu bot sampai di area pusaran (maksimal 10 detik)
@@ -204,10 +204,11 @@ function reachDropPosition()
                 return true
             end
 
-            -- Re-trigger pathfind setiap 2 detik jika belum sampai
-            if wait > 0 and wait % 20 == 0 then
+            -- Re-trigger pathfind setiap 2.5 detik jika belum sampai
+            if wait > 0 and wait % 25 == 0 then
                 setModFly(true)
                 setAntiBounce(true)
+                humanSleep(150, 300)
                 FindPath(dropX, dropY)
             end
         end
@@ -233,8 +234,8 @@ end
 function waitForRespawn()
     currentStatus = "Item dikorbankan! Menunggu respawn..."
     
-    -- Jeda waktu efek kematian Growganoth (2.5 detik)
-    if Sleep then Sleep(2500) end
+    -- Jeda waktu efek kematian Growganoth (2.8 detik)
+    if Sleep then Sleep(2800) end
 
     -- Tunggu sampai posisi pemain terefresh kembali ke area White Door (di bawah pusaran)
     local wait = 0
@@ -247,15 +248,18 @@ function waitForRespawn()
                 break
             end
         end
-        if Sleep then Sleep(100) end
+        if Sleep then Sleep(150) end
         wait = wait + 1
     end
 
-    -- Beri jeda sejenak di White Door dan re-aktifkan ModFly & AntiBounce untuk pendakian berikutnya
-    if Sleep then Sleep(500) end
+    -- ANTI-BAN JITTER: Jeda wajar manusia setelah respawn di White Door (1.8 - 2.8 detik)
+    -- Mencegah heuristik server mendeteksi kematian/respawn loop yang terlalu cepat
+    currentStatus = "Respawn sukses, jeda aman anti-ban..."
+    humanSleep(1800, 2800)
+
     setModFly(true)
     setAntiBounce(true)
-    if Sleep then Sleep(200) end
+    humanSleep(300, 500)
 end
 
 -- Keluar dari world saat seluruh item habis
@@ -318,8 +322,8 @@ function mainGrowganothLoop()
         if not botRunning then break end
 
         if arrived then
-            -- Jeda singkat sebelum drop agar posisi stabil di atas pusaran
-            if Sleep then Sleep(200) end
+            -- Jeda stabilisasi posisi di atas pusaran (human jitter)
+            humanSleep(450, 750)
 
             -- FASE 2: Drop Tepat 1 Item ke Pusaran
             currentStatus = string.format("Drop 1 item ke pusaran... [Sisa: %d]", count)
@@ -342,9 +346,20 @@ function mainGrowganothLoop()
 
             -- FASE 3: Menunggu Respawn di White Door setelah mati di pusaran
             waitForRespawn()
+
+            -- ANTI-BAN REST INTERVAL: Setiap 5 kali pengorbanan, istirahat alami 5 - 8 detik di White Door
+            -- Mematahkan pola repetitif konstan agar terhindar dari radar server anti-macro
+            if dropStreak > 0 and (dropStreak % 5 == 0) and botRunning then
+                local restSeconds = math.random(5, 8)
+                currentStatus = string.format("Anti-ban break (%d detik)...", restSeconds)
+                if LogToConsole then
+                    pcall(LogToConsole, string.format("`3[Anti-Ban] `wIstirahat alami `2%d detik `wuntuk mereset rate-limit server...", restSeconds))
+                end
+                humanSleep(restSeconds * 1000, restSeconds * 1000 + 600)
+            end
         else
             -- Jika belum sampai dalam batas waktu, jeda singkat lalu coba naik kembali
-            if Sleep then Sleep(500) end
+            humanSleep(500, 800)
         end
     end
 
