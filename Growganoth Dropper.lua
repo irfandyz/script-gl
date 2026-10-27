@@ -21,15 +21,15 @@ local botRunning        = false
 local currentStatus     = "Idle (Buka /gw untuk pengaturan)"
 local dropX             = 48      -- Koordinat X pusaran (Default: 48)
 local dropY             = 15      -- Koordinat Y pusaran (Default: 15)
-local targetItemID      = 2572    -- Default: Ripper Wings (2572) / Battle Trout (3064)
+local targetItemID      = 818     -- Default: Ripper Wings (818) / Battle Trout (1542)
 local dropDelay         = 450     -- Jeda drop dalam milidetik (ms)
 local totalDropped      = 0       -- Total item yang berhasil dikorbankan
 local autoExitOnFinish  = true    -- Keluar world otomatis saat item habis
 
--- Daftar Preset Nama Item
+-- Daftar Preset Nama Item Resmi Growtopia
 local ITEM_PRESETS = {
-    [2572] = "Ripper Wings",
-    [3064] = "Battle Trout",
+    [818]  = "Ripper Wings",
+    [1542] = "Battle Trout",
     [4585] = "Laser Grid",
     [340]  = "Chandelier",
     [1006] = "Forcefield",
@@ -100,6 +100,18 @@ function findItem(id)
         end
     end
     return 0
+end
+
+-- Deteksi Otomatis Item Pengorbanan yang Ada di Tas
+function autoDetectBagItem()
+    if findItem(818) > 0 then
+        targetItemID = 818
+        return true
+    elseif findItem(1542) > 0 then
+        targetItemID = 1542
+        return true
+    end
+    return false
 end
 
 -- =========================================================
@@ -352,8 +364,9 @@ function showMenuDialog()
     table.insert(lines, "add_spacer|small|")
 
     -- Tombol Preset Cepat Pilihan Populer
-    table.insert(lines, "add_button|btn_preset_ripper|`5Preset: Ripper Wings (2572)|noflags|0|0|")
-    table.insert(lines, "add_button|btn_preset_trout|`1Preset: Battle Trout (3064)|noflags|0|0|")
+    table.insert(lines, "add_button|btn_preset_ripper|`5Preset: Ripper Wings (818)|noflags|0|0|")
+    table.insert(lines, "add_button|btn_preset_trout|`1Preset: Battle Trout (1542)|noflags|0|0|")
+    table.insert(lines, "add_button|btn_detect_bag|`2[ 🔍 Deteksi Otomatis dari Tas ]|noflags|0|0|")
     table.insert(lines, "add_spacer|small|")
 
     if botRunning then
@@ -494,20 +507,36 @@ function hookSendPacket(pktType, pkt)
             showMenuDialog()
             return true
 
-        -- 2. Preset Ripper Wings
+        -- 2. Preset Ripper Wings (ID: 818)
         elseif rawPkt:find("buttonClicked|btn_preset_ripper") then
-            targetItemID = 2572
+            targetItemID = 818
             if LogToConsole then
-                pcall(LogToConsole, "`5[Growganoth] `wTarget diatur ke Ripper Wings (ID: 2572)")
+                pcall(LogToConsole, "`5[Growganoth] `wTarget diatur ke Ripper Wings (ID: 818)")
             end
             showMenuDialog()
             return true
 
-        -- 3. Preset Battle Trout
+        -- 3. Preset Battle Trout (ID: 1542)
         elseif rawPkt:find("buttonClicked|btn_preset_trout") then
-            targetItemID = 3064
+            targetItemID = 1542
             if LogToConsole then
-                pcall(LogToConsole, "`1[Growganoth] `wTarget diatur ke Battle Trout (ID: 3064)")
+                pcall(LogToConsole, "`1[Growganoth] `wTarget diatur ke Battle Trout (ID: 1542)")
+            end
+            showMenuDialog()
+            return true
+
+        -- 3b. Deteksi Otomatis dari Tas
+        elseif rawPkt:find("buttonClicked|btn_detect_bag") then
+            local found = autoDetectBagItem()
+            if found then
+                if LogToConsole then
+                    pcall(LogToConsole, string.format("`2[Growganoth] `wItem terdeteksi di tas: %s (%d item)", 
+                          getItemDisplayName(targetItemID), findItem(targetItemID)))
+                end
+            else
+                if LogToConsole then
+                    pcall(LogToConsole, "`4[Growganoth] `wTidak ditemukan Ripper Wings atau Battle Trout di tas!")
+                end
             end
             showMenuDialog()
             return true
@@ -561,7 +590,8 @@ if AddHook then
     pcall(AddHook, "OnSendPacket", hookSendPacket)
 end
 
--- Otomatis aktifkan ModFly & AntiBounce untuk menangkal gangguan monster/hantu Growganoth
+-- Otomatis deteksi item korban di tas & aktifkan ModFly/AntiBounce
+autoDetectBagItem()
 setModFly(true)
 setAntiBounce(true)
 
