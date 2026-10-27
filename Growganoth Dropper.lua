@@ -416,8 +416,13 @@ function hookVariant(variant)
     return false
 end
 
-function hookSendPacket(type, pkt)
-    local rawPkt = (type(type) == "string" and type) or (type(pkt) == "string" and pkt) or ""
+function hookSendPacket(pktType, pkt)
+    local rawPkt = ""
+    if _G.type(pktType) == "string" then
+        rawPkt = pktType
+    elseif _G.type(pkt) == "string" then
+        rawPkt = pkt
+    end
     if rawPkt == "" then return false end
 
     local lowerPkt = rawPkt:lower()
