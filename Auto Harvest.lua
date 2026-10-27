@@ -537,41 +537,41 @@ function dropAllToStorage()
 end
 
 -- =========================================================
--- ALUR UTAMA HARVEST DIRT FARM (ZIGZAG PATH DENGAN PROXIMITY CHECK)
+-- ALUR UTAMA HARVEST UNIVERSAL (LACAK SEMUA POHON MATANG DI WORLD)
+-- Dimulai dari Kiri Atas, Zigzag Otomatis (Tanpa Batasan Layout/Alas)
 -- =========================================================
-function harvestRow(y, startX, endX, stepX)
-    for x = startX, endX, stepX do
-        if not botRunning then return end
+function harvestTreeAt(x, y)
+    if not botRunning then return end
 
-        local tile = GetTile(x, y)
-        -- Jika terdapat pohon yang siap panen
-        if tile and tile.fg == targetTreeID and tile.readyharvest then
-            local me = GetLocal()
-            local curX = me and math.floor(me.posX / 32) or -1
-            local curY = me and math.floor(me.posY / 32) or -1
+    local tile = GetTile(x, y)
+    if not tile or tile.fg ~= targetTreeID or not tile.readyharvest then
+        return
+    end
 
-            -- Cek Proximity: Hanya panggil FindPath jika belum berada di titik pohon
-            if curX ~= x or curY ~= y then
-                FindPath(x, y)
-                humanSleep(60, 90)
-            end
+    local me = GetLocal()
+    local curX = me and math.floor(me.posX / 32) or -1
+    local curY = me and math.floor(me.posY / 32) or -1
 
-            local retry = 0
-            while GetTile(x, y).fg == targetTreeID and retry < 25 and botRunning do
-                punch(x, y)
-                humanSleep(180, 220) -- Variasi punch alami manusiawi (Human Jitter)
-                retry = retry + 1
-            end
+    -- Cek Proximity: Hanya panggil FindPath jika belum berada di titik pohon
+    if curX ~= x or curY ~= y then
+        FindPath(x, y)
+        humanSleep(60, 90)
+    end
 
-            totalHarvested = totalHarvested + 1
-            humanSleep(30, 50)
-            collectHarvestDrops(4)
+    local retry = 0
+    while GetTile(x, y).fg == targetTreeID and retry < 25 and botRunning do
+        punch(x, y)
+        humanSleep(180, 220) -- Variasi punch alami manusiawi (Human Jitter)
+        retry = retry + 1
+    end
 
-            -- Cek apakah tas penuh untuk drop ke gudang
-            if findItem(targetBlockID) >= DROP_LIMIT or findItem(targetSeedID) >= DROP_LIMIT then
-                dropAllToStorage()
-            end
-        end
+    totalHarvested = totalHarvested + 1
+    humanSleep(25, 45)
+    collectHarvestDrops(4)
+
+    -- Cek apakah tas penuh untuk drop ke gudang
+    if findItem(targetBlockID) >= DROP_LIMIT or findItem(targetSeedID) >= DROP_LIMIT then
+        dropAllToStorage()
     end
 end
 
@@ -585,7 +585,7 @@ function mainHarvestLoop()
     isTransferring = false
     sleep(200)
 
-    currentStatus = "Mendeteksi pohon farmable matang..."
+    currentStatus = "Mendeteksi pohon farmable matang di world..."
     if targetTreeID == 0 then
         local found = detectFarmableTree()
         if not found then
@@ -598,31 +598,51 @@ function mainHarvestLoop()
         detectFarmableTree()
     end
 
-    -- Di Dirt Farm: Lorong panen pohon berada di baris GANJIL
-    -- Bagian Atas: Y = 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23
-    -- Bagian Bawah: Y = 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47, 49, 51, 53
-    local harvestRows = {}
-    for y = 3, 53, 2 do
-        table.insert(harvestRows, y)
+    -- Pindai SELURUH WORLD secara dinamis:
+    -- Lacak setiap pohon matang di mana pun berada (alas tanah, platform, batu, langit, dll)
+    local rowMap = {}   -- rowMap[y] = { x1, x2, ... }
+    local rowList = {}  -- daftar baris Y yang memiliki pohon
+
+    for _, tile in pairs(GetTiles()) do
+        if tile.fg == targetTreeID and tile.readyharvest then
+            if not rowMap[tile.y] then
+                rowMap[tile.y] = {}
+                table.insert(rowList, tile.y)
+            end
+            table.insert(rowMap[tile.y], tile.x)
+        end
     end
 
-    local totalRows = #harvestRows
-    for idx, rowY in ipairs(harvestRows) do
+    -- Urutkan baris dari ATAS ke BAWAH (Y terkecil ke terbesar)
+    table.sort(rowList)
+
+    if #rowList == 0 then
+        currentStatus = "Semua pohon sudah dipanen!"
+        botRunning = false
+        showMenuDialog()
+        return
+    end
+
+    local totalRows = #rowList
+    for idx, rowY in ipairs(rowList) do
         if not botRunning then break end
 
-        -- FAST ROW SKIP: Lewati baris jika tidak ada pohon matang sama sekali!
-        if rowHasMatureTrees(rowY) then
-            currentStatus = string.format("Memanen Baris Y = %d (%d/%d)...", rowY, idx, totalRows)
-
-            -- Pola Zigzag: baris ganjil maju (2 -> 97), baris berikutnya mundur (97 -> 2)
-            if idx % 2 == 1 then
-                harvestRow(rowY, 2, 97, 1)
-            else
-                harvestRow(rowY, 97, 2, -1)
-            end
-
-            sleep(60)
+        local xList = rowMap[rowY] or {}
+        -- Pola Zigzag: Mulai dari KIRI ATAS (baris ganjil: kiri -> kanan, baris genap: kanan -> kiri)
+        if idx % 2 == 1 then
+            table.sort(xList, function(a, b) return a < b end)
+        else
+            table.sort(xList, function(a, b) return a > b end)
         end
+
+        currentStatus = string.format("Memanen Baris Y = %d (%d/%d, %d pohon)...", rowY, idx, totalRows, #xList)
+
+        for _, colX in ipairs(xList) do
+            if not botRunning then break end
+            harvestTreeAt(colX, rowY)
+        end
+
+        sleep(60)
     end
 
     -- Setor sisa hasil panen terakhir jika ada
@@ -634,7 +654,7 @@ function mainHarvestLoop()
     botRunning = false
     currentStatus = "Panen Selesai (Completed!)"
     if LogToConsole then
-        pcall(LogToConsole, string.format("`2[Harvest] `wPanen selesai! Total: `2%d `wPohon | Setor: `2%d `wBlock, `2%d `wSeed.", 
+        pcall(LogToConsole, string.format("`2[Harvest] `wPanen tuntas! Total: `2%d `wPohon | Setor: `2%d `wBlock, `2%d `wSeed.", 
               totalHarvested, totalBlockDropped, totalSeedDropped))
     end
     showMenuDialog()
