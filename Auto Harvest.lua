@@ -742,8 +742,8 @@ function hookSendPacket(type, pkt)
 
     if not pkt then return false end
 
-    -- Command chat /harvest atau /menu
-    if pkt:find("/harvest") or pkt:find("/menu") then
+    -- Command chat /ht, /harvest, atau /menu
+    if pkt:find("/ht") or pkt:find("/harvest") or pkt:find("/menu") then
         showMenuDialog()
         return true
     end
@@ -818,7 +818,7 @@ if AddHook then
 end
 
 if LogToConsole then
-    pcall(LogToConsole, "`2[Auto Harvest] `wScript berhasil dimuat! Ketik `2/harvest `wuntuk membuka menu.")
+    pcall(LogToConsole, "`2[Auto Harvest] `wScript dimuat! Ketik `2/ht `watau `2/harvest `wuntuk membuka menu.")
 end
 
 showMenuDialog()
