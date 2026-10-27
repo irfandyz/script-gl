@@ -582,16 +582,42 @@ end
 -- FUNGSI PEMBERSIHAN (CLEARING) & NAVIGASI ANTI-STUCK
 -- =========================================================
 
--- Navigasi Pintar: Jika jalan terhalang oleh blok solid yang belum hancur, hancurkan seketika agar bot tidak stuck!
+-- Navigasi Pintar & Anti-Spam Packet:
+-- 1. Cek apakah bot sudah di posisi target sebelum kirim packet (cegah spam packet & disconnect).
+-- 2. Adaptasi delay sleep berdasarkan jarak agar tidak dianggap speed/packet flood.
+-- 3. Hancurkan rintangan jika terhalang di lorong ganjil.
 function safeFindPath(targetX, targetY)
-    FindPath(targetX, targetY)
-    humanSleep(60, 90)
     local me = GetLocal()
+    if me then
+        local curX = math.floor(me.posX / 32)
+        local curY = math.floor(me.posY / 32)
+        -- Jika bot SUDAH berada di petak target, JANGAN kirim packet lagi!
+        if curX == targetX and curY == targetY then
+            return
+        end
+    end
+
+    local startX = me and math.floor(me.posX / 32) or targetX
+    local startY = me and math.floor(me.posY / 32) or targetY
+    local dist = math.max(math.abs(startX - targetX), math.abs(startY - targetY))
+
+    FindPath(targetX, targetY)
+
+    -- Jeda adaptif manusiawi sesuai jarak (menghindari "too many packets")
+    if dist > 30 then
+        humanSleep(250, 350)
+    elseif dist > 8 then
+        humanSleep(150, 220)
+    else
+        humanSleep(80, 130)
+    end
+
+    -- Jika posisi belum sampai (kemungkinan terhalang blok di depan)
+    me = GetLocal()
     if not me then return end
     local curX = math.floor(me.posX / 32)
     local curY = math.floor(me.posY / 32)
 
-    -- Jika posisi belum sampai (kemungkinan terhalang blok di depan)
     if curX ~= targetX or curY ~= targetY then
         local targetTile = GetTile(targetX, targetY)
         -- PROTEKSI MUTLAK:
@@ -607,7 +633,7 @@ function safeFindPath(targetX, targetY)
             end
         end
         FindPath(targetX, targetY)
-        humanSleep(60, 90)
+        humanSleep(120, 180)
     end
 end
 
@@ -753,8 +779,12 @@ function breakLava()
                 end
             end
 
-            safeFindPath(standX, standY)
-            humanSleep(40, 70)
+            local me = GetLocal()
+            local curX = me and math.floor(me.posX / 32) or -1
+            local curY = me and math.floor(me.posY / 32) or -1
+            if math.abs(curX - standX) > 1 or math.abs(curY - standY) > 1 then
+                safeFindPath(standX, standY)
+            end
 
             -- Lava hanya butuh 3 kali hit di Growtopia! Dibatasi maksimal 12 retry cepat (150-180ms)
             local retry = 0
@@ -787,47 +817,12 @@ end
 
 -- =========================================================
 -- SESI QUALITY CONTROL (QC SWEEP) & PENAMBALAN TANAH
--- Memastikan 100% lava bersih, lubang tanah tertambal, lorong rapi & world bersih!
+-- Anti-Disconnect / Anti-Packet Flood: batch segment & targeted pickup
 -- =========================================================
 function checkAndSweepExcavation()
     currentStatus = "Pemeriksaan Akhir Galian (QC Sweep)..."
     if LogToConsole then
-        pcall(LogToConsole, "`2[QC] `wMemulai pemeriksaan QC menyeluruh: Lava, Penambalan Tanah, & Sapu Bersih...")
-    end
-
-    -- Helper: Menambal 1 petak kosong dengan tanah (ID 2)
-    local function patchTileWithDirt(tx, ty)
-        if not botRunning then return false end
-        local curTile = GetTile(tx, ty)
-        if not curTile or curTile.fg ~= 0 then return true end
-
-        -- Ambil tanah jika inventori kosong
-        if findItem(2) == 0 then
-            smartCollect(6)
-            if findItem(2) == 0 and hasNurseryTrees() then
-                plantHarvest(tx, (ty == 24) and 23 or (ty - 1))
-            end
-        end
-
-        if findItem(2) == 0 then
-            if LogToConsole then
-                pcall(LogToConsole, string.format("`4[QC-Tambal] `wKehabisan tanah untuk menambal (%d, %d)", tx, ty))
-            end
-            return false
-        end
-
-        -- Berdiri di lorong ganjil di atasnya (atau Y = 23 jika menambal lantai 24)
-        local standY = (ty == 24) and 23 or (ty - 1)
-        safeFindPath(tx, standY)
-        humanSleep(40, 70)
-
-        local pRetry = 0
-        while GetTile(tx, ty).fg == 0 and pRetry < 10 and findItem(2) > 0 and botRunning do
-            place(tx, ty, 2)
-            humanSleep(150, 180)
-            pRetry = pRetry + 1
-        end
-        return (GetTile(tx, ty).fg ~= 0)
+        pcall(LogToConsole, "`2[QC] `wMemulai pemeriksaan QC: Lava, Penambalan Tanah, & Sapu Bersih...")
     end
 
     -- -------------------------------------------------------------
@@ -848,8 +843,13 @@ function checkAndSweepExcavation()
                 end
             end
 
-            safeFindPath(standX, standY)
-            humanSleep(40, 70)
+            -- Hanya bergerak jika di luar jangkauan (cegah spam teleport)
+            local me = GetLocal()
+            local curX = me and math.floor(me.posX / 32) or -1
+            local curY = me and math.floor(me.posY / 32) or -1
+            if math.abs(curX - standX) > 1 or math.abs(curY - standY) > 1 then
+                safeFindPath(standX, standY)
+            end
 
             local retry = 0
             while GetTile(tile.x, tile.y).fg == 4 and retry < 15 and botRunning do
@@ -860,23 +860,30 @@ function checkAndSweepExcavation()
             smartCollect(4)
 
             -- Jika lava ini berada di baris tanah farm (baris genap Y = 24..54), langsung tambal dengan tanah!
-            if tile.y >= 24 and tile.y <= 54 and (tile.y % 2 == 0) and tile.x >= 2 and tile.x <= 97 then
-                patchTileWithDirt(tile.x, tile.y)
+            if tile.y >= 24 and tile.y <= 54 and (tile.y % 2 == 0) and tile.x >= 2 and tile.x <= 97 and GetTile(tile.x, tile.y).fg == 0 then
+                if findItem(2) == 0 then smartCollect(6) end
+                if findItem(2) > 0 then
+                    local pRetry = 0
+                    while GetTile(tile.x, tile.y).fg == 0 and pRetry < 8 and findItem(2) > 0 and botRunning do
+                        place(tile.x, tile.y, 2)
+                        humanSleep(150, 180)
+                        pRetry = pRetry + 1
+                    end
+                end
             end
         end
     end
 
     -- -------------------------------------------------------------
-    -- FASE 2: QC PENAMBALAN BLOK TANAH (Cek semua baris farm genap yang bolong)
+    -- FASE 2: QC PENAMBALAN BLOK TANAH (Batch Segment 5-Tile per Titik Berdiri)
+    -- Anti-Flood: Bot berdiri 1 kali untuk menjangkau hingga 5 petak di sekitarnya
     -- -------------------------------------------------------------
     currentStatus = "QC: Memeriksa baris tanah yang belum ditambal..."
-    -- Baris tanah bawah tanah & lantai dasar: Y = 24, 26, 28, ..., 54 (selalu diperiksa)
     local checkRows = {}
     for ry = 24, 54, 2 do
         table.insert(checkRows, ry)
     end
 
-    -- Jika baris atas (Y < 24) sudah dibangun sebelumnya, sertakan juga dalam pemeriksaan penambalan
     if not needsDirtFarm() then
         for ry = 4, 22, 2 do
             table.insert(checkRows, ry)
@@ -885,14 +892,63 @@ function checkAndSweepExcavation()
 
     for _, rowY in ipairs(checkRows) do
         if not botRunning then break end
-        for colX = 2, 97 do
-            if not botRunning then break end
-            -- Jika petak di baris farm kosong (fg == 0), segera tambal dengan tanah!
-            local t = GetTile(colX, rowY)
+
+        -- Cek cepat: Apakah baris ini memiliki petak yang bolong (fg == 0)?
+        local hasEmptyTile = false
+        for cX = 2, 97 do
+            local t = GetTile(cX, rowY)
             if t and t.fg == 0 then
-                currentStatus = string.format("QC: Menambal lubang tanah di (%d, %d)...", colX, rowY)
-                patchTileWithDirt(colX, rowY)
-                humanSleep(30, 50)
+                hasEmptyTile = true
+                break
+            end
+        end
+
+        -- Jika seluruh baris sudah terisi penuh tanah/batu, lewati tanpa bergerak!
+        if hasEmptyTile then
+            local standY = (rowY == 24) and 23 or (rowY - 1)
+            local colX = 2
+            while colX <= 97 and botRunning do
+                -- Cek apakah di jendela 5 tile (colX s/d colX + 4) ada petak bolong
+                local endX = math.min(colX + 4, 97)
+                local segmentHasHole = false
+                for checkX = colX, endX do
+                    local t = GetTile(checkX, rowY)
+                    if t and t.fg == 0 then
+                        segmentHasHole = true
+                        break
+                    end
+                end
+
+                if segmentHasHole then
+                    -- Berdiri di tengah segmen (colX + 2)
+                    local standX = math.min(colX + 2, 97)
+                    safeFindPath(standX, standY)
+
+                    -- Tambal semua petak yang bolong dalam jangkauan tanpa berpindah posisi
+                    for patchX = colX, endX do
+                        if not botRunning then break end
+                        local t = GetTile(patchX, rowY)
+                        if t and t.fg == 0 then
+                            if findItem(2) == 0 then
+                                smartCollect(6)
+                                if findItem(2) == 0 and hasNurseryTrees() then
+                                    plantHarvest(standX, standY)
+                                end
+                            end
+
+                            if findItem(2) > 0 then
+                                local pRetry = 0
+                                while GetTile(patchX, rowY).fg == 0 and pRetry < 8 and findItem(2) > 0 and botRunning do
+                                    place(patchX, rowY, 2)
+                                    humanSleep(150, 180)
+                                    pRetry = pRetry + 1
+                                end
+                            end
+                        end
+                    end
+                    humanSleep(60, 90)
+                end
+                colX = colX + 5 -- Lompat 5 tile ke segmen berikutnya
             end
         end
     end
@@ -902,8 +958,7 @@ function checkAndSweepExcavation()
     -- -------------------------------------------------------------
     currentStatus = "QC: Memeriksa sisa galian di lorong pohon..."
     local function isUnmined(tx, ty)
-        -- PROTEKSI MUTLAK: Baris Genap (ty % 2 == 0) adalah BARIS TANAH DIRT FARM!
-        -- Dilarang keras disentuh atau dihancurkan sama sekali!
+        -- PROTEKSI MUTLAK: Baris Genap (ty % 2 == 0) adalah BARIS TANAH DIRT FARM! Dilarang disentuh!
         if ty % 2 == 0 then return false end
 
         local t = GetTile(tx, ty)
@@ -911,13 +966,12 @@ function checkAndSweepExcavation()
         -- Bedrock (8), White Door (6), dan Wooden Platform (102) TIDAK boleh dihancurkan!
         if t.fg == 8 or t.fg == 6 or t.fg == 102 then return false end
 
-        -- Di baris lorong ganjil (area pohon), bersihkan jika masih ada blok padat (fg ~= 0) atau background (bg ~= 0)
         return (t.fg ~= 0 or t.bg ~= 0)
     end
 
     local pass = 0
     local foundMissed = true
-    while foundMissed and pass < 3 and botRunning do
+    while foundMissed and pass < 2 and botRunning do
         foundMissed = false
         pass = pass + 1
         for y = 25, 53, 2 do -- STEP 2: HANYA lorong kosong ganjil!
@@ -926,13 +980,11 @@ function checkAndSweepExcavation()
                 if not botRunning then break end
                 if isUnmined(x, y) then
                     foundMissed = true
-                    -- Berdiri di lorong ganjil yang sama (baris y), di sebelah kiri (x-1) atau kanan (x+1)
                     local standX = (x > 2 and GetTile(x - 1, y).fg == 0) and (x - 1) or (x + 1)
                     safeFindPath(standX, y)
-                    humanSleep(50, 80)
 
                     local retry = 0
-                    while isUnmined(x, y) and retry < 35 and botRunning do
+                    while isUnmined(x, y) and retry < 30 and botRunning do
                         punch(x, y)
                         humanSleep(170, 210)
                         retry = retry + 1
@@ -944,37 +996,36 @@ function checkAndSweepExcavation()
     end
 
     -- -------------------------------------------------------------
-    -- FASE 4: QC SAPU BERSIH FLOATING ITEMS (Pungut & drop ke storage)
+    -- FASE 4: QC SAPU BERSIH FLOATING ITEMS (Targeted Pickup via ObjectList)
+    -- Bebas Disconnect: Tidak ada lagi blind teleport bolak-balik 2 ke 97!
     -- -------------------------------------------------------------
-    currentStatus = "QC: Menyapu bersih floating items di world..."
-    for sweepY = 25, 53, 2 do -- STEP 2: Berjalan melayang di lorong ganjil
-        if not botRunning then break end
-        safeFindPath(2, sweepY)
-        humanSleep(60, 90)
-        smartCollect(6)
-        safeFindPath(97, sweepY)
-        humanSleep(60, 90)
-        smartCollect(6)
-        checkAndDropToStorage()
-    end
+    currentStatus = "QC: Mengumpulkan sisa floating items..."
+    local rawObjs = GetObjectList()
+    if rawObjs then
+        for _, obj in pairs(rawObjs) do
+            if not botRunning then break end
+            if COLLECT_WHITELIST[obj.itemid] and obj.posY >= (24 * 32) then
+                local ox = math.floor(obj.posX / 32)
+                local oy = math.floor(obj.posY / 32)
+                local targetWalkY = (oy % 2 == 1) and oy or (oy - 1)
 
-    -- Pungut setiap sisa floating items yang masih terdeteksi oleh ObjectList di area galian
-    for _, obj in pairs(GetObjectList()) do
-        if not botRunning then break end
-        if COLLECT_WHITELIST[obj.itemid] and obj.posY >= (24 * 32) then
-            local ox = math.floor(obj.posX / 32)
-            local oy = math.floor(obj.posY / 32)
-            -- Selalu berjalan di lorong ganjil agar tidak menginjak baris tanah
-            local targetWalkY = (oy % 2 == 1) and oy or (oy - 1)
-            safeFindPath(ox, targetWalkY)
-            humanSleep(80, 120)
-            smartCollect(4)
+                local me = GetLocal()
+                local curX = me and math.floor(me.posX / 32) or -1
+                local curY = me and math.floor(me.posY / 32) or -1
+
+                -- Hanya gerak jika jarak > 2 petak
+                if math.abs(curX - ox) > 2 or curY ~= targetWalkY then
+                    safeFindPath(ox, targetWalkY)
+                    humanSleep(80, 120)
+                end
+                smartCollect(4)
+            end
         end
     end
 
     checkAndDropToStorage(true)
     if LogToConsole then
-        pcall(LogToConsole, "`2[QC] `wPemeriksaan menyeluruh tuntas! Lava bersih, blok bolong tertambal rapi!")
+        pcall(LogToConsole, "`2[QC] `wPemeriksaan menyeluruh tuntas! Aman dari disconnect & world bersih.")
     end
 end
 
