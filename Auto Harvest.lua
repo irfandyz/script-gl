@@ -420,13 +420,20 @@ local function findNextDropLocation(currentX, currentY, isSeed)
     return curX, curY
 end
 
-function dropAllToStorage()
+function dropAllToStorage(forceAll)
     local blockCount = findItem(targetBlockID)
     local seedCount  = findItem(targetSeedID)
 
     -- Cek apakah memenuhi syarat drop
-    if blockCount < DROP_LIMIT and seedCount < DROP_LIMIT then
-        return
+    if not forceAll then
+        if blockCount < DROP_LIMIT and seedCount < DROP_LIMIT then
+            return
+        end
+    else
+        -- Jika forceAll (misal saat tree habis), cukup ada sisa (> 0) sudah harus drop semua
+        if blockCount == 0 and seedCount == 0 then
+            return
+        end
     end
 
     local mainWorld = getMainWorldName()
@@ -439,9 +446,12 @@ function dropAllToStorage()
     local savedX = me and math.floor(me.posX / 32) or 50
     local savedY = me and math.floor(me.posY / 32) or 23
 
-    currentStatus = "Menyetor hasil panen ke " .. STORAGE_WORLD .. "..."
+    currentStatus = forceAll and "Menyetor SEMUA sisa hasil panen ke " .. STORAGE_WORLD .. "..."
+                            or "Menyetor hasil panen ke " .. STORAGE_WORLD .. "..."
     if LogToConsole then
-        pcall(LogToConsole, "`2[Storage] `wKapasitas tas tercapai (" .. blockCount .. " Block, " .. seedCount .. " Seed). Menuju " .. STORAGE_WORLD .. "...")
+        local msg = forceAll and string.format("`2[Storage] `wTree habis! Menyetor sisa tas (%d Block, %d Seed) ke %s...", blockCount, seedCount, STORAGE_WORLD)
+                             or string.format("`2[Storage] `wKapasitas tas tercapai (%d Block, %d Seed). Menuju %s...", blockCount, seedCount, STORAGE_WORLD)
+        pcall(LogToConsole, msg)
     end
 
     -- Masuk ke World Gudang Penyimpanan
@@ -468,7 +478,8 @@ function dropAllToStorage()
     local seedDropY = math.max(2, whiteDoorY - 2)
 
     -- 1. DROP BLOCK (SEJAJAR White Door, Auto-Shift ke kiri jika penuh/terhalang)
-    if findItem(targetBlockID) >= DROP_LIMIT then
+    local shouldDropBlock = forceAll and (findItem(targetBlockID) > 0) or (findItem(targetBlockID) >= DROP_LIMIT)
+    if shouldDropBlock then
         currentStatus = "Menyetor Block ke storage..."
         local dropTries = 0
 
@@ -512,7 +523,8 @@ function dropAllToStorage()
     end
 
     -- 2. DROP SEED (MELAYANG 2 BLOK DI ATAS White Door, Auto-Shift ke kiri jika penuh)
-    if findItem(targetSeedID) >= DROP_LIMIT then
+    local shouldDropSeed = forceAll and (findItem(targetSeedID) > 0) or (findItem(targetSeedID) >= DROP_LIMIT)
+    if shouldDropSeed then
         currentStatus = "Menyetor Seed ke storage..."
         local dropTries = 0
 
@@ -563,12 +575,14 @@ function dropAllToStorage()
     setAntiBounce(true)
     humanSleep(200, 300)
 
-    -- Kembali ke titik kerja terakhir saat panen
-    local pathRetry = 0
-    while (math.floor(GetLocal().posX / 32) ~= savedX or math.floor(GetLocal().posY / 32) ~= savedY) and pathRetry < 25 and botRunning do
-        FindPath(savedX, savedY)
-        sleep(250)
-        pathRetry = pathRetry + 1
+    -- Kembali ke titik kerja terakhir saat panen (hanya jika masih ada sisa pohon untuk dipanen)
+    if not forceAll then
+        local pathRetry = 0
+        while (math.floor(GetLocal().posX / 32) ~= savedX or math.floor(GetLocal().posY / 32) ~= savedY) and pathRetry < 25 and botRunning do
+            FindPath(savedX, savedY)
+            sleep(250)
+            pathRetry = pathRetry + 1
+        end
     end
 
     isTransferring = false
@@ -657,6 +671,11 @@ function mainHarvestLoop()
 
     if #rowList == 0 then
         currentStatus = "Semua pohon sudah dipanen!"
+        -- Jika pohon sudah habis tapi di tas masih ada sisa block / seed, drop semua ke gudang
+        if findItem(targetBlockID) > 0 or findItem(targetSeedID) > 0 then
+            currentStatus = "Setor sisa panen ke gudang..."
+            dropAllToStorage(true)
+        end
         botRunning = false
         showMenuDialog()
         return
@@ -684,10 +703,10 @@ function mainHarvestLoop()
         sleep(60)
     end
 
-    -- Setor sisa hasil panen terakhir jika ada
+    -- Setor SEMUA sisa hasil panen terakhir (berapapun jumlahnya) ke gudang karena pohon sudah habis
     if findItem(targetBlockID) > 0 or findItem(targetSeedID) > 0 then
         currentStatus = "Setor sisa panen ke gudang..."
-        dropAllToStorage()
+        dropAllToStorage(true)
     end
 
     botRunning = false
