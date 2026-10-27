@@ -6,21 +6,48 @@
 -- Fitur Unggulan:
 -- 1. Precision 1-by-1 Drop: Menjatuhkan tepat 1 item per naik ke pusaran 
 --    (Mencegah kehilangan ratusan item sekaligus karena batas reward Growganoth).
--- 2. GUI Koordinat Interaktif: Cukup terbang manual ke atas pusaran, buka menu,
---    lalu klik "[ 📍 Simpan Posisi Saat Ini ]". Bot otomatis mengunci koordinat.
--- 3. Lock-Safe Start: Bot TIDAK AKAN BISA DI-START sebelum posisi pusaran dikunci.
--- 4. Auto-Exit on Depletion: Jika target item di tas sudah habis (0), bot otomatis
---    berhenti dan keluar dari world (Quit to Exit).
--- 5. Anti-Ban Human Jitter: Jeda drop acak yang natural dan aman dari rate limit.
+-- 2. Fixed Pusaran: Koordinat otomatis terkunci di (50, 15).
+-- 3. Auto-Detect Bag: Otomatis mendeteksi Ripper Wings (818) atau Battle Trout (1542).
+-- 4. Seamless Loop: Naik -> Drop 1 -> Respawn di White Door -> Naik lagi otomatis!
+-- 5. Auto-Exit on Depletion: Jika item di tas sudah habis (0), bot keluar world.
+-- 6. Anti-Ban Human Jitter & Mod Radar: Proteksi aman dari rate limit dan admin.
 -- ============================================================================
+
+-- Compatibility layer: memastikan kompatibilitas antar versi GrowLauncher (case-sensitive safety)
+local Sleep = Sleep or sleep
+local sleep = Sleep
+local SendPacket = SendPacket or sendPacket
+local sendPacket = SendPacket
+local SendPacketRaw = SendPacketRaw or sendPacketRaw
+local sendPacketRaw = SendPacketRaw
+local GetLocal = GetLocal or getLocal
+local getLocal = GetLocal
+local GetTile = GetTile or getTile
+local getTile = GetTile
+local GetTiles = GetTiles or getTiles
+local getTiles = GetTiles
+local GetInventory = GetInventory or getInventory
+local getInventory = GetInventory
+local GetObjectList = GetObjectList or getObjectList or getObjects or GetObjects
+local getObjectList = GetObjectList
+local FindPath = FindPath or findPath
+local findPath = FindPath
+local AddHook = AddHook or addHook
+local addHook = AddHook
+local editToggle = editToggle or EditToggle
+local setValue = setValue or SetValue
+local runThread = runThread or RunThread or (coroutine and coroutine.wrap)
+local SendVariant = SendVariant or sendVariant
+local sendVariant = SendVariant
+local LogToConsole = LogToConsole or logToConsole or log or Log
 
 -- =========================================================
 -- KONFIGURASI DEFAULT & STATE
 -- =========================================================
 local botRunning        = false
-local currentStatus     = "Idle (Buka /gw untuk pengaturan)"
-local dropX             = 50      -- Koordinat X pusaran (Default: 50)
-local dropY             = 15      -- Koordinat Y pusaran (Default: 15)
+local currentStatus     = "Idle (Buka /gw untuk menu)"
+local dropX             = 50      -- Koordinat X pusaran (Fixed: 50)
+local dropY             = 15      -- Koordinat Y pusaran (Fixed: 15)
 local targetItemID      = 818     -- Default: Ripper Wings (818) / Battle Trout (1542)
 local dropDelay         = 450     -- Jeda drop dalam milidetik (ms)
 local totalDropped      = 0       -- Total item yang berhasil dikorbankan
@@ -39,17 +66,12 @@ local ITEM_PRESETS = {
 -- =========================================================
 -- HELPER UTILITIES & WRAPPERS
 -- =========================================================
-function sleep(ms)
-    local sleepFunc = sleep or Sleep
-    if sleepFunc then sleepFunc(ms) end
-end
-
 function humanSleep(minMs, maxMs)
-    minMs = minMs or 200
-    maxMs = maxMs or 300
-    if minMs > maxMs then minMs, maxMs = maxMs, minMs end
-    local delay = math.random(minMs, maxMs)
-    sleep(delay)
+    if not maxMs or maxMs <= minMs then
+        if Sleep then Sleep(minMs) end
+    else
+        if Sleep then Sleep(math.random(minMs, maxMs)) end
+    end
 end
 
 function setModFly(enable)
@@ -167,12 +189,13 @@ function reachDropPosition()
 
     setModFly(true)
     setAntiBounce(true)
+    if Sleep then Sleep(150) end
     FindPath(dropX, dropY)
 
-    -- Tunggu bot sampai di area pusaran
+    -- Tunggu bot sampai di area pusaran (maksimal 10 detik)
     local wait = 0
-    while wait < 80 and botRunning do
-        sleep(100)
+    while wait < 100 and botRunning do
+        if Sleep then Sleep(100) end
         me = GetLocal()
         if me then
             curX = math.floor(me.posX / 32)
@@ -210,28 +233,29 @@ end
 function waitForRespawn()
     currentStatus = "Item dikorbankan! Menunggu respawn..."
     
-    -- Jeda waktu kematian Growganoth (2.5 detik)
-    sleep(2500)
+    -- Jeda waktu efek kematian Growganoth (2.5 detik)
+    if Sleep then Sleep(2500) end
 
-    -- Tunggu sampai posisi pemain terefresh kembali ke bawah (area White Door)
+    -- Tunggu sampai posisi pemain terefresh kembali ke area White Door (di bawah pusaran)
     local wait = 0
     while wait < 60 and botRunning do
         local me = GetLocal()
         if me then
             local curY = math.floor(me.posY / 32)
-            -- Jika posisi Y pemain sudah jauh di bawah pusaran (kembali ke White Door)
-            if math.abs(curY - dropY) > 4 then
+            -- Posisi Y pemain sudah jauh di bawah pusaran (White Door Y biasanya > 40, Pusaran Y = 15)
+            if (curY - dropY) > 5 then
                 break
             end
         end
-        sleep(100)
+        if Sleep then Sleep(100) end
         wait = wait + 1
     end
 
-    -- Beri jeda sejenak dan re-aktifkan ModFly & AntiBounce untuk pendakian berikutnya
-    sleep(600)
+    -- Beri jeda sejenak di White Door dan re-aktifkan ModFly & AntiBounce untuk pendakian berikutnya
+    if Sleep then Sleep(500) end
     setModFly(true)
     setAntiBounce(true)
+    if Sleep then Sleep(200) end
 end
 
 -- Keluar dari world saat seluruh item habis
@@ -241,9 +265,9 @@ function exitWorld()
     end
     currentStatus = "Keluar dari world..."
     SendPacket(3, "action|quit_to_exit")
-    sleep(600)
+    if Sleep then Sleep(600) end
     SendPacket(3, "action|join_request\nname|EXIT\ninvitedWorld|0")
-    sleep(1000)
+    if Sleep then Sleep(1000) end
 end
 
 -- =========================================================
@@ -294,6 +318,9 @@ function mainGrowganothLoop()
         if not botRunning then break end
 
         if arrived then
+            -- Jeda singkat sebelum drop agar posisi stabil di atas pusaran
+            if Sleep then Sleep(200) end
+
             -- FASE 2: Drop Tepat 1 Item ke Pusaran
             currentStatus = string.format("Drop 1 item ke pusaran... [Sisa: %d]", count)
             
@@ -317,7 +344,7 @@ function mainGrowganothLoop()
             waitForRespawn()
         else
             -- Jika belum sampai dalam batas waktu, jeda singkat lalu coba naik kembali
-            sleep(500)
+            if Sleep then Sleep(500) end
         end
     end
 
@@ -424,13 +451,13 @@ function hookVariant(variant)
         end
     end
 
-    -- Izinkan dialog menu dan dialog drop_item bawaan game
+    -- Izinkan dialog menu kita, blokir popup dialog game lainnya (termasuk drop popup)
     if v1 == "OnDialogRequest" then
         local str = tostring(v2)
-        if str:find("growganoth_menu") or str:find("drop_item") then
-            return false -- Izinkan dialog menu dan dialog drop diproses
+        if str:find("growganoth_menu") then
+            return false -- Izinkan dialog menu kita ditampilkan
         end
-        return true -- Blokir dialog lain agar tidak mengganggu bot
+        return true -- Blokir dialog lain agar layar bersih dan tidak membekukan kontrol bot
     end
     return false
 end
@@ -456,10 +483,16 @@ function hookSendPacket(pktType, pkt)
     if rawPkt:find("dialog_name|growganoth_menu") then
         local threadFunc = runThread or RunThread
         local function startTask(fn)
+            local safeFn = function()
+                local ok, err = pcall(fn)
+                if not ok and LogToConsole then
+                    pcall(LogToConsole, "`4[Growganoth Error] `w" .. tostring(err))
+                end
+            end
             if threadFunc then
-                threadFunc(fn)
+                threadFunc(safeFn)
             else
-                local co = coroutine.create(fn)
+                local co = coroutine.create(safeFn)
                 coroutine.resume(co)
             end
         end
@@ -473,13 +506,17 @@ function hookSendPacket(pktType, pkt)
                     if LogToConsole then
                         pcall(LogToConsole, "`4[Peringatan] `wTidak ada Ripper Wings (ID: 818) atau Battle Trout (ID: 1542) di dalam tas!")
                     end
+                    showMenuDialog()
                 else
                     botRunning = true
                     currentStatus = "Memulai pengorbanan ke Growganoth..."
+                    if LogToConsole then
+                        pcall(LogToConsole, string.format("`2[Growganoth] `wBot dimulai! Target: %s (%d item). Menuju pusaran...", getItemDisplayName(targetItemID), findItem(targetItemID)))
+                    end
                     startTask(mainGrowganothLoop)
+                    -- Dialog ditutup otomatis agar kontrol dan pergerakan karakter langsung bebas berjalan
                 end
             end
-            showMenuDialog()
             return true
 
         -- 2. Tombol Stop
