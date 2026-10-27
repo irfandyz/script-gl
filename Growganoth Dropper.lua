@@ -91,21 +91,43 @@ function findItem(id)
 end
 
 -- =========================================================
--- SISTEM DROP TEPAT 1 ITEM (PRECISE SACRIFICE)
+-- DETEKSI MODERATOR / GUARDIAN (MOD RADAR)
+-- =========================================================
+function isModeratorPresent()
+    local getPlayers = GetPlayerList or GetPlayers or getPlayerList
+    if not getPlayers then return false end
+    local ok, players = pcall(getPlayers)
+    if not ok or not players then return false end
+
+    for _, p in pairs(players) do
+        local name = p.name or ""
+        -- Moderator / Guardian memiliki prefix @ atau flag mod
+        if name:sub(1, 1) == "@" or name:find("@") or p.isMod or p.mod or p.admin then
+            return true, name
+        end
+    end
+    return false
+end
+
+-- =========================================================
+-- SISTEM DROP TEPAT 1 ITEM (PRECISE SACRIFICE WITH JITTER)
 -- =========================================================
 function dropSingleItem(id)
     if findItem(id) <= 0 then return false end
 
     -- Buka dialog drop untuk item target
     SendPacket(2, "action|drop\nitemID|" .. id)
-    humanSleep(180, 240)
+    
+    -- Jeda mikro natural dialog (160 - 240 ms)
+    humanSleep(160, 240)
 
     -- Kirim dialog_return tepat dengan count = 1
     SendPacket(2, "action|dialog_return\ndialog_name|drop_item\nitemID|" .. id .. "|\ncount|1")
     
-    -- Jeda pengorbanan yang disesuaikan dengan konfigurasi user
-    local halfDelay = math.floor(dropDelay / 2)
-    humanSleep(halfDelay, halfDelay + 60)
+    -- Anti-Ban: Dynamic Jitter (Deviasi acak alami -35ms s/d +75ms)
+    local jitter = math.random(-35, 75)
+    local effectiveDelay = math.max(220, dropDelay + jitter)
+    humanSleep(effectiveDelay - 30, effectiveDelay + 30)
     return true
 end
 
@@ -146,12 +168,12 @@ function reachDropPosition()
     return false
 end
 
--- Keluar dari world saat seluruh item habis
+-- Keluar dari world saat seluruh item habis atau darurat Mod
 function exitWorld()
     if LogToConsole then
-        pcall(LogToConsole, "`4[Growganoth] `wSemua item telah habis! Keluar dari world...")
+        pcall(LogToConsole, "`4[Growganoth] `wKeluar dari world (Quit to Exit)...")
     end
-    currentStatus = "Item habis, keluar dari world..."
+    currentStatus = "Keluar dari world..."
     SendPacket(3, "action|quit_to_exit")
     sleep(600)
     SendPacket(3, "action|join_request\nname|EXIT\ninvitedWorld|0")
@@ -159,7 +181,7 @@ function exitWorld()
 end
 
 -- =========================================================
--- MAIN LOOP: EKSEKUSI PENGORBANAN KE GROWGANOTH
+-- MAIN LOOP: EKSEKUSI PENGORBANAN DENGAN FULL ANTI-BAN
 -- =========================================================
 function mainGrowganothLoop()
     if not botRunning then return end
@@ -195,7 +217,25 @@ function mainGrowganothLoop()
               getItemDisplayName(targetItemID), initialCount, dropX, dropY))
     end
 
+    local dropStreak = 0
+    local nextBreathTarget = math.random(15, 25) -- Pola napas manusiawi
+    local consecutiveFails = 0
+
     while botRunning do
+        -- Anti-Ban Pillar 1: Pengecekan aktif kehadiran Moderator
+        local modFound, modName = isModeratorPresent()
+        if modFound then
+            if LogToConsole then
+                pcall(LogToConsole, "`4[Mod Radar] `wPERINGATAN: Moderator terdeteksi di world: " .. tostring(modName))
+            end
+            botRunning = false
+            currentStatus = "EMERGENCY STOP (Moderator Terdeteksi: " .. tostring(modName) .. ")"
+            if autoExitOnFinish then
+                exitWorld()
+            end
+            break
+        end
+
         local count = findItem(targetItemID)
         if count <= 0 then
             -- Seluruh item telah habis dikorbankan
@@ -208,6 +248,13 @@ function mainGrowganothLoop()
         if not botRunning then break end
 
         if arrived then
+            -- Anti-Ban Pillar 4: Kirim state update alami sesekali
+            local p = GetLocal()
+            if p and SendPacketRaw then
+                local facing = (dropStreak % 2 == 0) and 0 or 32
+                pcall(SendPacketRaw, false, {type = 0, x = p.posX, y = p.posY, state = facing})
+            end
+
             currentStatus = string.format("Drop 1 item ke pusaran... [Sisa: %d]", count)
             
             local beforeCount = count
@@ -217,9 +264,29 @@ function mainGrowganothLoop()
             local afterCount = findItem(targetItemID)
             if afterCount < beforeCount then
                 totalDropped = totalDropped + (beforeCount - afterCount)
+                consecutiveFails = 0
+                dropStreak = dropStreak + 1
+
+                -- Anti-Ban Pillar 2: Micro-Pause (Jeda napas manusiawi setiap 15-25 drop)
+                if dropStreak >= nextBreathTarget then
+                    currentStatus = string.format("Jeda napas manusiawi (Anti-Ban)... [Sisa: %d]", afterCount)
+                    humanSleep(1300, 2200)
+                    dropStreak = 0
+                    nextBreathTarget = math.random(15, 25)
+                end
             else
-                -- Jika packet drop terlewat atau cooldown dialog, beri jeda singkat
-                humanSleep(150, 250)
+                -- Fail-Safe Desync Recovery
+                consecutiveFails = consecutiveFails + 1
+                if consecutiveFails >= 3 then
+                    if LogToConsole then
+                        pcall(LogToConsole, "`6[Anti-Ban] `wDeteksi packet desync, cooling down 2 detik & resync posisi...")
+                    end
+                    humanSleep(1800, 2400)
+                    reachDropPosition()
+                    consecutiveFails = 0
+                else
+                    humanSleep(200, 300)
+                end
             end
         else
             -- Jika gagal mencapai posisi (misal terpental atau respawn di White Door), istirahat sejenak
@@ -297,6 +364,42 @@ end
 -- =========================================================
 function hookVariant(variant)
     if not variant then return false end
+
+    -- Anti-Ban Pillar 1: Deteksi Moderator / Guardian masuk world via OnSpawn
+    if variant.v1 == "OnSpawn" then
+        local spawnStr = variant.v2 or ""
+        if spawnStr:find("name|%s*@") or spawnStr:find("`4@") or spawnStr:find("`#@") then
+            if LogToConsole then
+                pcall(LogToConsole, "`4[Mod Radar] `wPERINGATAN KRITIS: Moderator/Guardian terdeteksi masuk world!")
+                pcall(LogToConsole, "`4[Mod Radar] `wMenghentikan bot seketika dan melakukan emergency exit...")
+            end
+            botRunning = false
+            currentStatus = "EMERGENCY STOP (Moderator Masuk World!)"
+            if autoExitOnFinish then
+                exitWorld()
+            end
+            showMenuDialog()
+            return false
+        end
+    end
+
+    -- Anti-Ban Pillar 3: Deteksi pesan sistem / warning error server / packet flood
+    if variant.v1 == "OnConsoleMessage" or variant.v1 == "OnDialogRequest" then
+        local text = (variant.v2 or ""):lower()
+        if text:find("temporarily banned") or text:find("server overloaded") or 
+           text:find("too many people") or text:find("suspicious") or 
+           text:find("shadow ban") or text:find("too many packets") or 
+           text:find("packet flood") or text:find("request reconnect") then
+            if LogToConsole then
+                pcall(LogToConsole, "`4[Anti-Ban Alert] `wTerdeteksi sinyal peringatan server: " .. text:sub(1, 60))
+                pcall(LogToConsole, "`4[Anti-Ban Alert] `wBot otomatis dijeda untuk melindungi akun & IP Anda!")
+            end
+            botRunning = false
+            currentStatus = "Dijeda Otomatis (Server Warning / Packet Flood)"
+            showMenuDialog()
+            return false
+        end
+    end
 
     -- Blokir dialog bawaan game saat membuka menu kustom
     if variant.v1 == "OnDialogRequest" then
