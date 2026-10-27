@@ -355,7 +355,9 @@ function showMenuDialog()
     local dialog = table.concat(lines, "\n")
     local sendVar = sendVariant or SendVariant
     if sendVar then
-        sendVar({[0] = "OnDialogRequest", [1] = dialog})
+        -- Kirim dengan format standar GrowLauncher {v1, v2} dan fallback array {[0], [1]}
+        pcall(sendVar, {v1 = "OnDialogRequest", v2 = dialog})
+        pcall(sendVar, {[0] = "OnDialogRequest", [1] = dialog})
     end
 end
 
@@ -365,9 +367,12 @@ end
 function hookVariant(variant)
     if not variant then return false end
 
+    local v1 = variant.v1 or variant[0] or ""
+    local v2 = variant.v2 or variant[1] or ""
+
     -- Anti-Ban Pillar 1: Deteksi Moderator / Guardian masuk world via OnSpawn
-    if variant.v1 == "OnSpawn" then
-        local spawnStr = variant.v2 or ""
+    if v1 == "OnSpawn" then
+        local spawnStr = tostring(v2)
         if spawnStr:find("name|%s*@") or spawnStr:find("`4@") or spawnStr:find("`#@") then
             if LogToConsole then
                 pcall(LogToConsole, "`4[Mod Radar] `wPERINGATAN KRITIS: Moderator/Guardian terdeteksi masuk world!")
@@ -384,8 +389,8 @@ function hookVariant(variant)
     end
 
     -- Anti-Ban Pillar 3: Deteksi pesan sistem / warning error server / packet flood
-    if variant.v1 == "OnConsoleMessage" or variant.v1 == "OnDialogRequest" then
-        local text = (variant.v2 or ""):lower()
+    if v1 == "OnConsoleMessage" or v1 == "OnDialogRequest" then
+        local text = tostring(v2):lower()
         if text:find("temporarily banned") or text:find("server overloaded") or 
            text:find("too many people") or text:find("suspicious") or 
            text:find("shadow ban") or text:find("too many packets") or 
@@ -402,33 +407,36 @@ function hookVariant(variant)
     end
 
     -- Blokir dialog bawaan game saat membuka menu kustom
-    if variant.v1 == "OnDialogRequest" then
-        if variant.v2 and variant.v2:find("growganoth_menu") then
-            return false
+    if v1 == "OnDialogRequest" then
+        if tostring(v2):find("growganoth_menu") then
+            return false -- Izinkan dialog menu kita ditampilkan
         end
-        return true
+        return true -- Blokir dialog lain agar tidak mengganggu bot
     end
     return false
 end
 
 function hookSendPacket(type, pkt)
-    if not pkt then return false end
+    local rawPkt = (type(type) == "string" and type) or (type(pkt) == "string" and pkt) or ""
+    if rawPkt == "" then return false end
+
+    local lowerPkt = rawPkt:lower()
 
     -- Command Chat: /gw, /growganoth, atau /drop
-    if pkt:find("/gw") or pkt:find("/growganoth") or pkt:find("/drop") then
+    if lowerPkt:find("/gw") or lowerPkt:find("/growganoth") or lowerPkt:find("/drop") or lowerPkt:find("/menu") then
         showMenuDialog()
-        return true
+        return true -- Blokir chat agar tidak terkirim ke publik
     end
 
     -- Tangkap interaksi pada menu Growganoth
-    if pkt:find("dialog_name|growganoth_menu") then
+    if rawPkt:find("dialog_name|growganoth_menu") then
         -- Tangkap input form ID & Delay
-        local newId = pkt:match("input_item_id|([^|\n]+)")
+        local newId = rawPkt:match("input_item_id|([^|\n]+)")
         if newId and tonumber(newId) then
             targetItemID = tonumber(newId)
         end
 
-        local newDelay = pkt:match("input_drop_delay|([^|\n]+)")
+        local newDelay = rawPkt:match("input_drop_delay|([^|\n]+)")
         if newDelay and tonumber(newDelay) then
             dropDelay = math.max(250, tonumber(newDelay))
         end
@@ -444,7 +452,7 @@ function hookSendPacket(type, pkt)
         end
 
         -- 1. Tombol Simpan Posisi Saat Ini
-        if pkt:find("buttonClicked|btn_save_pos") then
+        if rawPkt:find("buttonClicked|btn_save_pos") then
             local me = GetLocal()
             if me then
                 dropX = math.floor(me.posX / 32)
@@ -458,7 +466,7 @@ function hookSendPacket(type, pkt)
             return true
 
         -- 2. Preset Ripper Wings
-        elseif pkt:find("buttonClicked|btn_preset_ripper") then
+        elseif rawPkt:find("buttonClicked|btn_preset_ripper") then
             targetItemID = 2572
             if LogToConsole then
                 pcall(LogToConsole, "`5[Growganoth] `wTarget diatur ke Ripper Wings (ID: 2572)")
@@ -467,7 +475,7 @@ function hookSendPacket(type, pkt)
             return true
 
         -- 3. Preset Battle Trout
-        elseif pkt:find("buttonClicked|btn_preset_trout") then
+        elseif rawPkt:find("buttonClicked|btn_preset_trout") then
             targetItemID = 3064
             if LogToConsole then
                 pcall(LogToConsole, "`1[Growganoth] `wTarget diatur ke Battle Trout (ID: 3064)")
@@ -476,7 +484,7 @@ function hookSendPacket(type, pkt)
             return true
 
         -- 4. Tombol Start
-        elseif pkt:find("buttonClicked|btn_start") then
+        elseif rawPkt:find("buttonClicked|btn_start") then
             if not botRunning then
                 if dropX == 0 and dropY == 0 then
                     currentStatus = "`4Gagal Start: Kunci koordinat pusaran dulu!"
@@ -498,14 +506,14 @@ function hookSendPacket(type, pkt)
             return true
 
         -- 5. Tombol Stop
-        elseif pkt:find("buttonClicked|btn_stop") then
+        elseif rawPkt:find("buttonClicked|btn_stop") then
             botRunning = false
             currentStatus = "Bot Dihentikan (Stopped)"
             showMenuDialog()
             return true
 
         -- 6. Tombol Refresh
-        elseif pkt:find("buttonClicked|btn_refresh") then
+        elseif rawPkt:find("buttonClicked|btn_refresh") then
             showMenuDialog()
             return true
         end
@@ -525,5 +533,8 @@ if AddHook then
 end
 
 if LogToConsole then
-    pcall(LogToConsole, "`4[Growganoth Dropper] `wScript siap! Ketik `2/gw `watau `2/growganoth `wuntuk membuka menu.")
+    pcall(LogToConsole, "`4[Growganoth Dropper] `wScript berhasil dimuat! Ketik `2/gw `wuntuk membuka menu.")
 end
+
+-- Tampilkan Menu Dialog secara otomatis saat script pertama kali dijalankan
+showMenuDialog()
