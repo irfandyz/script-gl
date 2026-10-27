@@ -354,38 +354,26 @@ end
 
 -- =========================================================
 -- MENU GUI IN-GAME DIALOG (/gw atau /growganoth)
+-- Desain Minimalis & Otomatis: Hanya Start/Stop & Info Realtime
 -- =========================================================
 function showMenuDialog()
+    -- Selalu sinkronkan deteksi item korban di tas
+    autoDetectBagItem()
+
     local statusText = botRunning and "`2[RUNNING] `w" .. currentStatus or "`4[STOPPED] `w" .. currentStatus
-    local posText = (dropX > 0 and dropY > 0) 
-        and string.format("`2X: %d, Y: %d `w(Terkunci)", dropX, dropY) 
-        or "`4Belum diset! (Harap klik Simpan Posisi)"
     local bagCount = findItem(targetItemID)
-    local itemName = getItemDisplayName(targetItemID)
+    local itemDesc = (bagCount > 0) 
+        and (getItemDisplayName(targetItemID) .. " (`2" .. bagCount .. " item`w)")
+        or "`4Tidak ada Ripper Wings / Battle Trout di tas!"
 
     local lines = {}
     table.insert(lines, "set_default_color|`o")
     table.insert(lines, "add_label_with_icon|big|`4Growganoth `2Sacrifice Dropper|left|3808|")
     table.insert(lines, "add_spacer|small|")
     table.insert(lines, "add_textbox|`oStatus: " .. statusText .. "|left|")
-    table.insert(lines, "add_textbox|`oPosisi Pusaran: " .. posText .. "|left|")
-    table.insert(lines, "add_textbox|`oTarget Item: " .. itemName .. "|left|")
-    table.insert(lines, "add_textbox|`oSisa di Tas: `2" .. bagCount .. " `witem | Total Terbuang: `2" .. totalDropped .. " `witem|left|")
-    table.insert(lines, "add_spacer|small|")
-
-    table.insert(lines, "add_button|btn_save_pos|`3[ 📍 Simpan Posisi Saat Ini ]|noflags|0|0|")
-    table.insert(lines, "add_text_input|input_drop_x|Koordinat X:|" .. dropX .. "|4|")
-    table.insert(lines, "add_text_input|input_drop_y|Koordinat Y:|" .. dropY .. "|4|")
-    table.insert(lines, "add_spacer|small|")
-
-    table.insert(lines, "add_text_input|input_item_id|Target Item ID:|" .. targetItemID .. "|6|")
-    table.insert(lines, "add_text_input|input_drop_delay|Jeda Drop (ms):|" .. dropDelay .. "|5|")
-    table.insert(lines, "add_spacer|small|")
-
-    -- Tombol Preset Cepat Pilihan Populer
-    table.insert(lines, "add_button|btn_preset_ripper|`5Preset: Ripper Wings (818)|noflags|0|0|")
-    table.insert(lines, "add_button|btn_preset_trout|`1Preset: Battle Trout (1542)|noflags|0|0|")
-    table.insert(lines, "add_button|btn_detect_bag|`2[ 🔍 Deteksi Otomatis dari Tas ]|noflags|0|0|")
+    table.insert(lines, "add_textbox|`oPosisi Pusaran: `2X: 50, Y: 15 `w(Fixed)|left|")
+    table.insert(lines, "add_textbox|`oItem di Tas: " .. itemDesc .. "|left|")
+    table.insert(lines, "add_textbox|`oTotal Terkorban: `2" .. totalDropped .. " `witem|left|")
     table.insert(lines, "add_spacer|small|")
 
     if botRunning then
@@ -396,7 +384,7 @@ function showMenuDialog()
 
     table.insert(lines, "add_button|btn_refresh|`9Refresh Status|noflags|0|0|")
     table.insert(lines, "add_quick_exit|")
-    table.insert(lines, "end_dialog|growganoth_menu|Simpan & Tutup||")
+    table.insert(lines, "end_dialog|growganoth_menu|Tutup||")
 
     local dialog = table.concat(lines, "\n")
     local sendVar = sendVariant or SendVariant
@@ -480,29 +468,8 @@ function hookSendPacket(pktType, pkt)
         return true -- Blokir chat agar tidak terkirim ke publik
     end
 
-    -- Tangkap interaksi pada menu Growganoth
+    -- Tangkap interaksi tombol pada menu Growganoth
     if rawPkt:find("dialog_name|growganoth_menu") then
-        -- Tangkap input form ID, Delay & Koordinat
-        local newX = rawPkt:match("input_drop_x|([^|\n]+)")
-        if newX and tonumber(newX) then
-            dropX = tonumber(newX)
-        end
-
-        local newY = rawPkt:match("input_drop_y|([^|\n]+)")
-        if newY and tonumber(newY) then
-            dropY = tonumber(newY)
-        end
-
-        local newId = rawPkt:match("input_item_id|([^|\n]+)")
-        if newId and tonumber(newId) then
-            targetItemID = tonumber(newId)
-        end
-
-        local newDelay = rawPkt:match("input_drop_delay|([^|\n]+)")
-        if newDelay and tonumber(newDelay) then
-            dropDelay = math.max(250, tonumber(newDelay))
-        end
-
         local threadFunc = runThread or RunThread
         local function startTask(fn)
             if threadFunc then
@@ -513,66 +480,14 @@ function hookSendPacket(pktType, pkt)
             end
         end
 
-        -- 1. Tombol Simpan Posisi Saat Ini
-        if rawPkt:find("buttonClicked|btn_save_pos") then
-            local me = GetLocal()
-            if me then
-                dropX = math.floor(me.posX / 32)
-                dropY = math.floor(me.posY / 32)
-                currentStatus = string.format("Posisi pusaran terkunci di (%d, %d)", dropX, dropY)
-                if LogToConsole then
-                    pcall(LogToConsole, string.format("`2[Growganoth] `wPosisi pusaran berhasil disimpan: `2(%d, %d)", dropX, dropY))
-                end
-            end
-            showMenuDialog()
-            return true
-
-        -- 2. Preset Ripper Wings (ID: 818)
-        elseif rawPkt:find("buttonClicked|btn_preset_ripper") then
-            targetItemID = 818
-            if LogToConsole then
-                pcall(LogToConsole, "`5[Growganoth] `wTarget diatur ke Ripper Wings (ID: 818)")
-            end
-            showMenuDialog()
-            return true
-
-        -- 3. Preset Battle Trout (ID: 1542)
-        elseif rawPkt:find("buttonClicked|btn_preset_trout") then
-            targetItemID = 1542
-            if LogToConsole then
-                pcall(LogToConsole, "`1[Growganoth] `wTarget diatur ke Battle Trout (ID: 1542)")
-            end
-            showMenuDialog()
-            return true
-
-        -- 3b. Deteksi Otomatis dari Tas
-        elseif rawPkt:find("buttonClicked|btn_detect_bag") then
-            local found = autoDetectBagItem()
-            if found then
-                if LogToConsole then
-                    pcall(LogToConsole, string.format("`2[Growganoth] `wItem terdeteksi di tas: %s (%d item)", 
-                          getItemDisplayName(targetItemID), findItem(targetItemID)))
-                end
-            else
-                if LogToConsole then
-                    pcall(LogToConsole, "`4[Growganoth] `wTidak ditemukan Ripper Wings atau Battle Trout di tas!")
-                end
-            end
-            showMenuDialog()
-            return true
-
-        -- 4. Tombol Start
-        elseif rawPkt:find("buttonClicked|btn_start") then
+        -- 1. Tombol Start
+        if rawPkt:find("buttonClicked|btn_start") then
             if not botRunning then
-                if dropX == 0 and dropY == 0 then
-                    currentStatus = "`4Gagal Start: Kunci koordinat pusaran dulu!"
+                autoDetectBagItem()
+                if findItem(targetItemID) <= 0 then
+                    currentStatus = "`4Gagal Start: Ripper Wings / Battle Trout tidak ada di tas!"
                     if LogToConsole then
-                        pcall(LogToConsole, "`4[Peringatan] `wHarap berdiri di atas pusaran lalu klik '[ 📍 Simpan Posisi Saat Ini ]' terlebih dahulu!")
-                    end
-                elseif findItem(targetItemID) <= 0 then
-                    currentStatus = "`4Gagal Start: Item tidak ada di tas!"
-                    if LogToConsole then
-                        pcall(LogToConsole, string.format("`4[Peringatan] `wItem %s tidak ditemukan di tas!", getItemDisplayName(targetItemID)))
+                        pcall(LogToConsole, "`4[Peringatan] `wTidak ada Ripper Wings (ID: 818) atau Battle Trout (ID: 1542) di dalam tas!")
                     end
                 else
                     botRunning = true
@@ -583,14 +498,14 @@ function hookSendPacket(pktType, pkt)
             showMenuDialog()
             return true
 
-        -- 5. Tombol Stop
+        -- 2. Tombol Stop
         elseif rawPkt:find("buttonClicked|btn_stop") then
             botRunning = false
             currentStatus = "Bot Dihentikan (Stopped)"
             showMenuDialog()
             return true
 
-        -- 6. Tombol Refresh
+        -- 3. Tombol Refresh
         elseif rawPkt:find("buttonClicked|btn_refresh") then
             showMenuDialog()
             return true
