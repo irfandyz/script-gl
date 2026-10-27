@@ -141,22 +141,16 @@ function dropSingleItem(id)
 
     -- Buka dialog drop untuk item target
     SendPacket(2, "action|drop\nitemID|" .. id)
-    
-    -- Jeda mikro natural dialog (160 - 240 ms)
-    humanSleep(160, 240)
+    humanSleep(350, 450) -- Jeda aman agar server merespons pembukaan dialog drop
 
     -- Kirim dialog_return tepat dengan count = 1
     SendPacket(2, "action|dialog_return\ndialog_name|drop_item\nitemID|" .. id .. "|\ncount|1")
-    
-    -- Anti-Ban: Dynamic Jitter (Deviasi acak alami -35ms s/d +75ms)
-    local jitter = math.random(-35, 75)
-    local effectiveDelay = math.max(220, dropDelay + jitter)
-    humanSleep(effectiveDelay - 30, effectiveDelay + 30)
+    humanSleep(350, 450)
     return true
 end
 
 -- =========================================================
--- NAVIGASI MENUJU PUSARAN (VORTEX POSITIONING)
+-- NAVIGASI NAIK MENUJU PUSARAN (VORTEX CLIMBER WITH MODFLY)
 -- =========================================================
 function reachDropPosition()
     local me = GetLocal()
@@ -165,8 +159,8 @@ function reachDropPosition()
     local curX = math.floor(me.posX / 32)
     local curY = math.floor(me.posY / 32)
 
-    -- Jika sudah berada tepat di pusaran
-    if curX == dropX and curY == dropY then
+    -- Jika sudah berada tepat di pusaran (toleransi 1 blok)
+    if math.abs(curX - dropX) <= 1 and math.abs(curY - dropY) <= 1 then
         return true
     end
 
@@ -174,22 +168,59 @@ function reachDropPosition()
     setAntiBounce(true)
     FindPath(dropX, dropY)
 
-    -- Tunggu bot sampai di koordinat tujuan
+    -- Tunggu bot sampai di koordinat tujuan (maksimal 12 detik dari White Door)
     local wait = 0
-    while wait < 35 and botRunning do
+    while wait < 120 and botRunning do
         sleep(100)
         me = GetLocal()
         if me then
             curX = math.floor(me.posX / 32)
             curY = math.floor(me.posY / 32)
-            if curX == dropX and curY == dropY then
+            if math.abs(curX - dropX) <= 1 and math.abs(curY - dropY) <= 1 then
                 return true
+            end
+
+            -- Re-pathfind setiap 1.5 detik jika masih dalam perjalanan / ada halangan
+            if wait % 15 == 0 then
+                setModFly(true)
+                setAntiBounce(true)
+                FindPath(dropX, dropY)
             end
         end
         wait = wait + 1
     end
 
     return false
+end
+
+-- =========================================================
+-- DETEKSI KEMATIAN & RESPAWN DI WHITE DOOR
+-- =========================================================
+function waitForRespawn()
+    currentStatus = "Item dikorbankan! Menunggu respawn di White Door..."
+    
+    -- Jeda waktu animasi mati Growtopia (biasanya 1.5 - 2 detik)
+    humanSleep(1500, 2200)
+
+    -- Tunggu posisi pemain terefresh kembali ke bawah (area White Door)
+    local wait = 0
+    while wait < 40 and botRunning do
+        local me = GetLocal()
+        if me then
+            local curY = math.floor(me.posY / 32)
+            -- Jika posisi Y pemain sudah jauh di bawah pusaran (kembali ke White Door)
+            if curY > (dropY + 4) then
+                break
+            end
+        end
+        sleep(100)
+        wait = wait + 1
+    end
+
+    -- Beri jeda sejenak dan re-aktifkan ModFly & AntiBounce untuk pendakian berikutnya
+    humanSleep(300, 500)
+    setModFly(true)
+    setAntiBounce(true)
 end
 
 -- Keluar dari world saat seluruh item habis atau darurat Mod
@@ -205,7 +236,7 @@ function exitWorld()
 end
 
 -- =========================================================
--- MAIN LOOP: EKSEKUSI PENGORBANAN DENGAN FULL ANTI-BAN
+-- MAIN LOOP: OTOMATIS NAIK -> DROP 1 -> RESPAWN -> REPEAT
 -- =========================================================
 function mainGrowganothLoop()
     if not botRunning then return end
@@ -237,16 +268,15 @@ function mainGrowganothLoop()
     setAntiBounce(true)
 
     if LogToConsole then
-        pcall(LogToConsole, string.format("`2[Growganoth] `wDropper dimulai! Target: %s (%d item) | Posisi: (%d, %d)", 
+        pcall(LogToConsole, string.format("`2[Growganoth] `wDropper aktif! Target: %s (%d item) | Posisi: (%d, %d)", 
               getItemDisplayName(targetItemID), initialCount, dropX, dropY))
     end
 
     local dropStreak = 0
     local nextBreathTarget = math.random(15, 25) -- Pola napas manusiawi
-    local consecutiveFails = 0
 
     while botRunning do
-        -- Anti-Ban Pillar 1: Pengecekan aktif kehadiran Moderator
+        -- Anti-Ban: Pengecekan aktif kehadiran Moderator
         local modFound, modName = isModeratorPresent()
         if modFound then
             if LogToConsole then
@@ -266,55 +296,44 @@ function mainGrowganothLoop()
             break
         end
 
+        -- FASE 1: Naik dari White Door ke Pusaran
         currentStatus = string.format("Naik ke pusaran (%d, %d)... [Sisa: %d]", dropX, dropY, count)
         local arrived = reachDropPosition()
 
         if not botRunning then break end
 
         if arrived then
-            -- Anti-Ban Pillar 4: Kirim state update alami sesekali
-            local p = GetLocal()
-            if p and SendPacketRaw then
-                local facing = (dropStreak % 2 == 0) and 0 or 32
-                pcall(SendPacketRaw, false, {type = 0, x = p.posX, y = p.posY, state = facing})
-            end
-
+            -- FASE 2: Drop Tepat 1 Item ke Pusaran
             currentStatus = string.format("Drop 1 item ke pusaran... [Sisa: %d]", count)
             
             local beforeCount = count
             dropSingleItem(targetItemID)
 
-            -- Verifikasi apakah item berkurang
             local afterCount = findItem(targetItemID)
             if afterCount < beforeCount then
                 totalDropped = totalDropped + (beforeCount - afterCount)
-                consecutiveFails = 0
-                dropStreak = dropStreak + 1
-
-                -- Anti-Ban Pillar 2: Micro-Pause (Jeda napas manusiawi setiap 15-25 drop)
-                if dropStreak >= nextBreathTarget then
-                    currentStatus = string.format("Jeda napas manusiawi (Anti-Ban)... [Sisa: %d]", afterCount)
-                    humanSleep(1300, 2200)
-                    dropStreak = 0
-                    nextBreathTarget = math.random(15, 25)
-                end
             else
-                -- Fail-Safe Desync Recovery
-                consecutiveFails = consecutiveFails + 1
-                if consecutiveFails >= 3 then
-                    if LogToConsole then
-                        pcall(LogToConsole, "`6[Anti-Ban] `wDeteksi packet desync, cooling down 2 detik & resync posisi...")
-                    end
-                    humanSleep(1800, 2400)
-                    reachDropPosition()
-                    consecutiveFails = 0
-                else
-                    humanSleep(200, 300)
-                end
+                totalDropped = totalDropped + 1
             end
+
+            dropStreak = dropStreak + 1
+            if LogToConsole then
+                pcall(LogToConsole, string.format("`2[Growganoth] `w1x %s berhasil dikorbankan! (Total: `2%d `w| Sisa di tas: `2%d`w)", 
+                      ITEM_PRESETS[targetItemID] or "Item", totalDropped, findItem(targetItemID)))
+            end
+
+            -- Anti-Ban Micro-Pause sesekali
+            if dropStreak >= nextBreathTarget then
+                humanSleep(1000, 1800)
+                dropStreak = 0
+                nextBreathTarget = math.random(15, 25)
+            end
+
+            -- FASE 3: Menunggu Respawn di White Door setelah mati di pusaran
+            waitForRespawn()
         else
-            -- Jika gagal mencapai posisi (misal terpental atau respawn di White Door), istirahat sejenak
-            humanSleep(250, 400)
+            -- Jika gagal mencapai pusaran dalam 12 detik, jeda singkat dan coba kembali dari White Door
+            humanSleep(400, 700)
         end
     end
 
@@ -322,7 +341,7 @@ function mainGrowganothLoop()
     currentStatus = "Selesai (Semua item telah dikorbankan!)"
 
     if LogToConsole then
-        pcall(LogToConsole, string.format("`2[Growganoth] `wTuntas! Total `2%d `witem berhasil dikorbankan ke pusaran.", totalDropped))
+        pcall(LogToConsole, string.format("`2[Growganoth] `wPengorbanan TUNTAS! Total `2%d `witem berhasil dikorbankan ke pusaran.", totalDropped))
     end
 
     -- Keluar dari world jika opsi auto exit aktif
@@ -433,10 +452,11 @@ function hookVariant(variant)
         end
     end
 
-    -- Blokir dialog bawaan game saat membuka menu kustom
+    -- Izinkan dialog menu dan dialog drop_item bawaan game
     if v1 == "OnDialogRequest" then
-        if tostring(v2):find("growganoth_menu") then
-            return false -- Izinkan dialog menu kita ditampilkan
+        local str = tostring(v2)
+        if str:find("growganoth_menu") or str:find("drop_item") then
+            return false -- Izinkan dialog menu dan dialog drop diproses
         end
         return true -- Blokir dialog lain agar tidak mengganggu bot
     end
