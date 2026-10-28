@@ -189,7 +189,29 @@ function reachDropPosition()
 
     setModFly(true)
     setAntiBounce(true)
-    humanSleep(250, 450)
+    humanSleep(300, 500)
+
+    -- TAHAP 1: Waypoint Checkpoint Tengah (Jika jarak vertikal jauh dari White Door)
+    -- Membagi pendakian 37 blok menjadi 2 etape agar tidak memicu deteksi speed hack / packet flood
+    if (curY - dropY) > 16 then
+        local midY = math.floor((curY + dropY) / 2)
+        FindPath(dropX, midY)
+        local midWait = 0
+        while midWait < 30 and botRunning do
+            if Sleep then Sleep(100) end
+            me = GetLocal()
+            if me then
+                local myY = math.floor(me.posY / 32)
+                if math.abs(myY - midY) <= 3 then
+                    break
+                end
+            end
+            midWait = midWait + 1
+        end
+        humanSleep(300, 550) -- Jeda wajar di checkpoint tengah
+    end
+
+    -- TAHAP 2: Menuju Tepat ke Posisi Pusaran
     FindPath(dropX, dropY)
 
     -- Tunggu bot sampai di area pusaran (maksimal 10 detik)
@@ -204,11 +226,11 @@ function reachDropPosition()
                 return true
             end
 
-            -- Re-trigger pathfind setiap 2.5 detik jika belum sampai
-            if wait > 0 and wait % 25 == 0 then
+            -- Re-trigger pathfind setiap 3 detik jika belum sampai
+            if wait > 0 and wait % 30 == 0 then
                 setModFly(true)
                 setAntiBounce(true)
-                humanSleep(150, 300)
+                humanSleep(200, 350)
                 FindPath(dropX, dropY)
             end
         end
@@ -252,10 +274,10 @@ function waitForRespawn()
         wait = wait + 1
     end
 
-    -- ANTI-BAN JITTER: Jeda wajar manusia setelah respawn di White Door (1.8 - 2.8 detik)
+    -- ANTI-BAN JITTER: Jeda wajar manusia setelah respawn di White Door (2.5 - 3.5 detik)
     -- Mencegah heuristik server mendeteksi kematian/respawn loop yang terlalu cepat
     currentStatus = "Respawn sukses, jeda aman anti-ban..."
-    humanSleep(1800, 2800)
+    humanSleep(2500, 3500)
 
     setModFly(true)
     setAntiBounce(true)
@@ -347,15 +369,16 @@ function mainGrowganothLoop()
             -- FASE 3: Menunggu Respawn di White Door setelah mati di pusaran
             waitForRespawn()
 
-            -- ANTI-BAN REST INTERVAL: Setiap 5 kali pengorbanan, istirahat alami 5 - 8 detik di White Door
-            -- Mematahkan pola repetitif konstan agar terhindar dari radar server anti-macro
-            if dropStreak > 0 and (dropStreak % 5 == 0) and botRunning then
-                local restSeconds = math.random(5, 8)
-                currentStatus = string.format("Anti-ban break (%d detik)...", restSeconds)
+            -- ANTI-BAN LEAKY BUCKET RESET: Setiap 3 kali pengorbanan, istirahat pendinginan 10 - 14 detik di White Door
+            -- Server Growtopia memiliki ambang batas akumulasi pelanggaran (disconnect di putaran 8).
+            -- Istirahat 10-14 detik ini secara tuntas menguras kembali antrean pelanggaran server ke 0!
+            if dropStreak > 0 and (dropStreak % 3 == 0) and botRunning then
+                local restSeconds = math.random(10, 14)
+                currentStatus = string.format("Pendinginan server (%d detik)...", restSeconds)
                 if LogToConsole then
-                    pcall(LogToConsole, string.format("`3[Anti-Ban] `wIstirahat alami `2%d detik `wuntuk mereset rate-limit server...", restSeconds))
+                    pcall(LogToConsole, string.format("`3[Anti-Ban] `wIstirahat pendinginan `2%d detik `wdi White Door (Resetting Server Threshold)...", restSeconds))
                 end
-                humanSleep(restSeconds * 1000, restSeconds * 1000 + 600)
+                humanSleep(restSeconds * 1000, restSeconds * 1000 + 800)
             end
         else
             -- Jika belum sampai dalam batas waktu, jeda singkat lalu coba naik kembali
