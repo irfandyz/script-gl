@@ -400,6 +400,7 @@ function showMenuDialog()
     table.insert(lines, "add_textbox|`oPosisi Pusaran: `2X: 50, Y: 15 `w(Fixed)|left|")
     table.insert(lines, "add_textbox|`oItem di Tas: " .. itemDesc .. "|left|")
     table.insert(lines, "add_textbox|`oTotal Terkorban: `2" .. totalDropped .. " `witem|left|")
+    table.insert(lines, "add_textbox|`4[PENTING] `wWajib pasang (equip) `2Sayap/Wings `wdi badan!|left|")
     table.insert(lines, "add_spacer|small|")
 
     if botRunning then
@@ -466,13 +467,10 @@ function hookVariant(variant)
         end
     end
 
-    -- Izinkan dialog menu kita, blokir popup dialog game lainnya (termasuk drop popup)
+    -- Jangan blokir dialog server apapun di world publik GROWGANOTH
+    -- (Memblokir dialog server memicu deteksi bot karena captcha tertahan atau dialog state mismatch)
     if v1 == "OnDialogRequest" then
-        local str = tostring(v2)
-        if str:find("growganoth_menu") then
-            return false -- Izinkan dialog menu kita ditampilkan
-        end
-        return true -- Blokir dialog lain agar layar bersih dan tidak membekukan kontrol bot
+        return false -- Izinkan game memproses dialog secara sah dan normal
     end
     return false
 end
